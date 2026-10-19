@@ -1,0 +1,838 @@
+
+:root {
+    --navy: #102d50;
+    --navy-light: #1c456e;
+    --beige: #f4efe5;
+    --white: #ffffff;
+    --text: #263548;
+    --muted: #687789;
+    --border: #e1e5eb;
+    --danger-bg: #fff0ed;
+    --danger-text: #a52d20;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: var(--beige);
+    color: var(--text);
+    line-height: 1.6;
+}
+
+a {
+    color: var(--navy-light);
+}
+
+.login-container {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.login-card {
+    width: 100%;
+    max-width: 430px;
+    background: var(--white);
+    padding: 32px;
+    border-radius: 14px;
+    box-shadow: 0 12px 35px rgba(16, 45, 80, 0.10);
+}
+
+.brand-mark {
+    width: 58px;
+    height: 58px;
+    display: grid;
+    place-items: center;
+    background: var(--navy);
+    color: white;
+    border-radius: 12px;
+    font-size: 21px;
+    font-weight: bold;
+    margin-bottom: 18px;
+}
+
+.login-card h1,
+.home-header h1 {
+    color: var(--navy);
+    margin: 0;
+    font-size: 25px;
+}
+
+.subtitle,
+.home-header p {
+    color: var(--muted);
+    margin-top: 6px;
+}
+
+label {
+    display: block;
+    font-weight: 600;
+    margin: 16px 0 6px;
+}
+
+input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    font-size: 15px;
+}
+
+input:focus {
+    outline: 2px solid #a9bfd6;
+    border-color: var(--navy-light);
+}
+
+button,
+.btn-primary {
+    display: block;
+    width: 100%;
+    margin-top: 22px;
+    padding: 13px;
+    border: 0;
+    border-radius: 7px;
+    background: var(--navy);
+    color: white;
+    font-weight: bold;
+    font-size: 15px;
+    cursor: pointer;
+    text-align: center;
+    text-decoration: none;
+}
+
+button:hover,
+.btn-primary:hover {
+    background: var(--navy-light);
+}
+
+.forgot {
+    text-align: right;
+    margin-top: 15px;
+}
+
+.role-links {
+    border-top: 1px solid var(--border);
+    margin-top: 22px;
+    padding-top: 12px;
+}
+
+.role-links a {
+    display: inline-block;
+    margin: 4px 8px 4px 0;
+    font-size: 13px;
+}
+
+.alert {
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    padding: 12px;
+    border-radius: 7px;
+    margin-top: 16px;
+}
+
+.portal-home,
+.dashboard {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 35px 22px;
+}
+
+.home-header {
+    text-align: center;
+    padding: 30px 0;
+}
+
+.home-header .brand-mark {
+    margin: 0 auto 18px;
+}
+
+.portal-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.portal-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: white;
+    padding: 22px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.portal-card:hover {
+    border-color: var(--navy);
+    box-shadow: 0 5px 18px rgba(16, 45, 80, 0.08);
+}
+
+.arrow {
+    font-size: 22px;
+}
+
+.portal-home footer {
+    text-align: center;
+    color: var(--muted);
+    padding: 35px 0 10px;
+}
+
+.dashboard-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 15px;
+    background: var(--navy);
+    color: white;
+    padding: 24px;
+    border-radius: 12px;
+}
+
+.dashboard-header h1 {
+    margin: 0;
+}
+
+.dashboard-header p {
+    margin-bottom: 0;
+}
+
+.btn-logout {
+    background: white;
+    color: var(--navy);
+    padding: 9px 15px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.dashboard-content {
+    background: white;
+    border-radius: 12px;
+    margin-top: 22px;
+    padding: 24px;
+}
+
+@media (max-width: 600px) {
+    .portal-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .login-card {
+        padding: 24px;
+    }
+
+    .dashboard-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
+
+
+
+/* Administrator Dashboard Layout */
+.dashboard-container {
+    width: calc(100% - 32px);
+    max-width: 1100px;
+    margin: 40px auto;
+    padding: 28px;
+    box-sizing: border-box;
+}
+
+.dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 32px;
+}
+
+.dashboard-content {
+    margin-top: 24px;
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 24px;
+}
+
+@media (max-width: 600px) {
+    .dashboard-container {
+        width: calc(100% - 24px);
+        margin: 20px auto;
+        padding: 18px;
+    }
+
+    .dashboard-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+
+/* Shared Portal Header and Footer */
+
+.portal-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 28px;
+    background: var(--navy);
+    color: var(--white);
+}
+
+.portal-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.portal-brand-mark {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 9px;
+    background: var(--beige);
+    color: var(--navy);
+    font-weight: bold;
+}
+
+.portal-brand strong,
+.portal-brand span {
+    display: block;
+}
+
+.portal-brand span {
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+.portal-user {
+    font-size: 14px;
+}
+
+.site-main {
+    min-height: 70vh;
+    padding: 28px 24px 40px;
+}
+
+.portal-footer {
+    padding: 18px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+/* Teacher Management */
+
+.page-header {
+    max-width: 1100px;
+    margin: 0 auto 24px;
+}
+
+.page-header h1 {
+    margin: 0;
+    color: var(--navy);
+    font-size: 28px;
+}
+
+.page-header p {
+    margin: 6px 0 0;
+    color: var(--muted);
+}
+
+.card {
+    max-width: 1100px;
+    margin: 0 auto 24px;
+    padding: 24px;
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(16, 45, 80, 0.05);
+}
+
+.card h2 {
+    margin: 0 0 20px;
+    color: var(--navy);
+    font-size: 20px;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 22px;
+}
+
+.form-group {
+    min-width: 0;
+}
+
+.form-group label {
+    margin-top: 10px;
+}
+
+.form-group input {
+    width: 100%;
+    background: #fff;
+}
+
+.card button,
+.card .btn {
+    display: inline-block;
+    width: auto;
+    margin-top: 16px;
+    padding: 10px 16px;
+    border: 0;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 14px;
+    text-decoration: none;
+}
+
+.btn-primary {
+    background: var(--navy);
+    color: var(--white);
+}
+
+.btn-secondary {
+    background: #e8edf3;
+    color: var(--navy);
+}
+
+.btn-secondary:hover {
+    background: #d6e0eb;
+}
+
+.alert-success {
+    max-width: 1100px;
+    margin: 0 auto 20px;
+    background: #eaf6ed;
+    color: #226438;
+    padding: 13px 16px;
+    border-radius: 8px;
+}
+
+.alert-danger {
+    max-width: 1100px;
+    margin: 0 auto 20px;
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    padding: 13px 16px;
+    border-radius: 8px;
+}
+
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.table-responsive table {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap;
+}
+
+.table-responsive th {
+    background: var(--navy);
+    color: var(--white);
+    text-align: left;
+    font-weight: 600;
+}
+
+.table-responsive th,
+.table-responsive td {
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+.table-responsive tbody tr:hover {
+    background: #faf7f1;
+}
+
+.status-active,
+.status-inactive {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.status-active {
+    background: #e6f5e9;
+    color: #23723a;
+}
+
+.status-inactive {
+    background: #fff0ed;
+    color: #a52d20;
+}
+
+.table-responsive form {
+    margin: 0;
+}
+
+.table-responsive form button {
+    margin: 0;
+}
+
+.site-main > div:last-child {
+    max-width: 1100px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+@media (max-width: 650px) {
+    .portal-topbar {
+        padding: 14px 16px;
+        align-items: flex-start;
+    }
+
+    .portal-user {
+        max-width: 45%;
+        overflow-wrap: anywhere;
+    }
+
+    .site-main {
+        padding: 20px 12px 30px;
+    }
+
+    .form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .card {
+        padding: 18px;
+    }
+
+    .page-header h1 {
+        font-size: 23px;
+    }
+}
+
+
+
+/* ======================================
+   TEACHER MANAGEMENT - PAGE LAYOUT FIX
+====================================== */
+
+/* Main page spacing */
+.site-main {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 32px 28px 48px;
+    box-sizing: border-box;
+}
+
+/* Page heading */
+.page-header {
+    max-width: 100%;
+    margin: 0 0 26px;
+}
+
+.page-header h1 {
+    margin: 0 0 8px;
+    color: var(--navy);
+    font-size: 28px;
+    font-weight: 700;
+}
+
+.page-header p {
+    margin: 0;
+    color: var(--muted);
+    line-height: 1.6;
+}
+
+/* Cards */
+.card {
+    width: 100%;
+    max-width: 100%;
+    margin: 0 0 26px;
+    padding: 26px;
+    box-sizing: border-box;
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 4px 18px rgba(16, 45, 80, 0.06);
+}
+
+.card h2 {
+    margin: 0 0 22px;
+    color: var(--navy);
+    font-size: 20px;
+}
+
+/* Form layout */
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 24px;
+}
+
+.form-group {
+    min-width: 0;
+}
+
+.form-group label {
+    display: block;
+    margin: 0 0 8px;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.form-group input,
+.form-group select {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    box-sizing: border-box;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: #fff;
+    color: var(--text);
+    font: inherit;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--navy-light);
+    box-shadow: 0 0 0 3px rgba(28, 69, 110, 0.12);
+}
+
+/* Buttons */
+.card button,
+.card .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    min-height: 42px;
+    margin-top: 22px;
+    padding: 10px 18px;
+    border: none;
+    border-radius: 7px;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.card .btn-primary {
+    background: var(--navy);
+    color: #fff;
+}
+
+.card .btn-primary:hover {
+    background: var(--navy-light);
+}
+
+/* Teacher table */
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.table-responsive table {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap;
+    background: #fff;
+}
+
+.table-responsive th {
+    padding: 15px 16px;
+    background: var(--navy);
+    color: #fff;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.table-responsive td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-size: 14px;
+    vertical-align: middle;
+}
+
+.table-responsive tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.table-responsive tbody tr:hover {
+    background: #faf7f1;
+}
+
+.table-responsive form {
+    margin: 0;
+}
+
+.table-responsive form button {
+    min-height: 34px;
+    margin: 0;
+    padding: 7px 12px;
+}
+
+/* Alerts */
+.alert-success,
+.alert-danger {
+    width: 100%;
+    margin: 0 0 22px;
+    padding: 14px 18px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    line-height: 1.5;
+}
+
+.alert-success {
+    background: #eaf6ed;
+    color: #226438;
+}
+
+.alert-danger {
+    background: var(--danger-bg);
+    color: var(--danger-text);
+}
+
+/* Back button section */
+.site-main > div:last-child {
+    margin-top: 10px;
+}
+
+/* Responsive layout */
+@media (max-width: 768px) {
+    .site-main {
+        padding: 22px 16px 32px;
+    }
+
+    .card {
+        padding: 18px;
+    }
+
+    .form-grid {
+        grid-template-columns: 1fr;
+        gap: 14px;
+    }
+
+    .page-header h1 {
+        font-size: 24px;
+    }
+}
+
+@media (max-width: 480px) {
+    .site-main {
+        padding: 18px 12px 28px;
+    }
+
+    .card {
+        padding: 15px;
+        border-radius: 9px;
+    }
+}
+
+
+
+
+/* Course Management - Wider Layout */
+.dashboard {
+    width: calc(100% - 48px);
+    max-width: 1600px;
+    margin: 30px auto;
+    box-sizing: border-box;
+}
+
+.dashboard-header,
+.dashboard-content {
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+}
+
+.dashboard-content {
+    padding: 28px 30px;
+    margin-bottom: 28px;
+}
+
+/* Keep table columns readable */
+.dashboard-content table {
+    width: 100%;
+    min-width: 1100px;
+    border-collapse: collapse;
+}
+
+.dashboard-content th,
+.dashboard-content td {
+    padding: 14px 16px;
+    vertical-align: middle;
+    text-align: left;
+}
+
+.dashboard-content th {
+    white-space: nowrap;
+}
+
+/* Give the course title and teacher columns more room */
+.dashboard-content th:nth-child(2),
+.dashboard-content td:nth-child(2) {
+    min-width: 200px;
+}
+
+.dashboard-content th:nth-child(4),
+.dashboard-content td:nth-child(4) {
+    min-width: 190px;
+}
+
+/* Prevent buttons and action text from breaking */
+.dashboard-content button {
+    white-space: nowrap;
+    width: auto;
+    min-width: max-content;
+}
+
+.dashboard-content td form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: nowrap;
+}
+
+.dashboard-content td select {
+    min-width: 170px;
+    max-width: 230px;
+    padding: 9px 10px;
+}
+
+/* Responsive screens */
+@media (max-width: 768px) {
+    .dashboard {
+        width: calc(100% - 24px);
+        margin: 16px auto;
+    }
+
+    .dashboard-content {
+        padding: 18px 14px;
+    }
+}
