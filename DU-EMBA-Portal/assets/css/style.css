@@ -836,3 +836,44 @@ button:hover,
         padding: 18px 14px;
     }
 }
+
+
+
+
+/* Course Offerings - Responsive Table */
+.offerings-table-wrap {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
+    margin-top: 15px;
+    border-radius: 10px;
+}
+
+/* Increase table width */
+.offerings-table {
+    width: 100%;
+    min-width: 1250px;
+    border-collapse: collapse;
+    table-layout: auto;
+}
+
+/* Keep important data readable */
+.offerings-table th,
+.offerings-table td {
+    padding: 12px 14px;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+/* Responsive container */
+@media (max-width: 768px) {
+    .offerings-table-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .offerings-table {
+        min-width: 1250px;
+    }
+}
