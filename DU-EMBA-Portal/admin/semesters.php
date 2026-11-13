@@ -192,7 +192,7 @@ $semesters = $conn->query("
     ORDER BY a.start_date DESC, s.start_date DESC, s.id DESC
 ");
 
-include __DIR__ . '/../includes/header.php';
+require_once __DIR__ . '/../includes/admin-header.php';
 ?>
 
 <style>

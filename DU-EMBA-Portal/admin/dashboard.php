@@ -1,310 +1,233 @@
 <?php
-declare(strict_types=1);
-
-require_once __DIR__ . '/../includes/auth.php';
-require_once __DIR__ . '/../includes/functions.php';
-
-require_role('admin');
-
 $pageTitle = 'Administrator Dashboard';
 $description = 'Manage the complete DU EMBA MIS Student Portal.';
+
+require_once __DIR__ . '/../includes/admin-header.php';
+
+$adminName = $_SESSION['full_name'] ?? 'Administrator';
+
+$dashboardItems = [
+    [
+        'title' => 'User Management',
+        'description' => 'Create, edit, activate and deactivate student and staff accounts.',
+        'icon' => '♙',
+        'link' => 'users.php'
+    ],
+    [
+        'title' => 'Teacher Management',
+        'description' => 'Manage teacher profiles and information.',
+        'icon' => '♧',
+        'link' => 'teachers.php'
+    ],
+    [
+        'title' => 'Academic Sessions',
+        'description' => 'Create and manage academic sessions.',
+        'icon' => '▦',
+        'link' => 'academic-sessions.php'
+    ],
+    [
+        'title' => 'Semester Management',
+        'description' => 'Manage semesters and their academic status.',
+        'icon' => '▣',
+        'link' => 'semesters.php'
+    ],
+    [
+        'title' => 'Course Management',
+        'description' => 'Add, update and manage course information and categories.',
+        'icon' => '▤',
+        'link' => 'courses.php'
+    ],
+    [
+        'title' => 'Course Offerings',
+        'description' => 'Manage semester-wise course offerings, teachers and class schedules.',
+        'icon' => '◷',
+        'link' => 'course-offerings.php'
+    ]
+];
 ?>
-<!DOCTYPE html>
-<html lang="en">
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* DASHBOARD PAGE */
 
-    <title><?= e($pageTitle) ?> | DU EMBA MIS Portal</title>
+.dashboard-welcome {
+    background: #102d50;
+    color: white;
+    padding: 30px;
+    border-radius: 12px;
+    margin-bottom: 28px;
+    box-shadow: 0 5px 18px rgba(16, 45, 80, 0.12);
+}
 
-    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css">
+.dashboard-welcome h2 {
+    margin: 0 0 10px;
+    font-size: 25px;
+    color: white;
+}
 
-    <style>
-    .admin-dashboard {
-        max-width: 1450px;
-        margin: 35px auto;
-        padding: 0 25px;
+.dashboard-welcome p {
+    margin: 0;
+    color: #d7e1ed;
+    font-size: 14px;
+    line-height: 1.7;
+}
+
+.dashboard-section-title {
+    color: #102d50;
+    font-size: 19px;
+    margin: 0 0 18px;
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 20px;
+}
+
+.dashboard-card {
+    display: flex;
+    flex-direction: column;
+    background: white;
+    border: 1px solid #e1e5eb;
+    border-radius: 10px;
+    padding: 23px;
+    min-height: 205px;
+    box-shadow: 0 4px 16px rgba(16, 45, 80, 0.05);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    color: #263548;
+}
+
+.dashboard-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 22px rgba(16, 45, 80, 0.10);
+}
+
+.dashboard-card-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    background: #edf1f6;
+    color: #102d50;
+    border-radius: 9px;
+    font-size: 23px;
+    margin-bottom: 17px;
+}
+
+.dashboard-card h3 {
+    font-size: 16px;
+    color: #102d50;
+    margin: 0 0 9px;
+}
+
+.dashboard-card p {
+    color: #687789;
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 0 0 17px;
+    flex: 1;
+}
+
+.dashboard-card-action {
+    color: #102d50;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.dashboard-footer-note {
+    margin-top: 28px;
+    padding: 17px 20px;
+    background: #fff;
+    border: 1px solid #e1e5eb;
+    border-radius: 8px;
+    color: #687789;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+@media (max-width: 1100px) {
+    .dashboard-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 600px) {
+    .dashboard-grid {
+        grid-template-columns: 1fr;
     }
 
-    .admin-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 20px;
-        margin-bottom: 30px;
-        padding: 25px 30px;
-        background: var(--navy);
-        color: white;
-        border-radius: 14px;
+    .dashboard-welcome {
+        padding: 22px;
     }
 
-    .admin-header h1 {
-        margin: 0 0 8px;
-        font-size: 28px;
+    .dashboard-welcome h2 {
+        font-size: 21px;
     }
+}
+</style>
 
-    .admin-header p {
-        margin: 0;
-        opacity: .85;
-    }
+<div class="admin-page-header">
+    <h1>Administrator Dashboard</h1>
+    <p>Manage the DU EMBA MIS Student Portal from one place.</p>
+</div>
 
-    .admin-header a {
-        background: white;
-        color: var(--navy);
-        padding: 10px 18px;
-        border-radius: 7px;
-        text-decoration: none;
-        font-weight: 600;
-        white-space: nowrap;
-    }
+<section class="dashboard-welcome">
 
-    .admin-section {
-        margin-bottom: 35px;
-    }
+    <h2>
+        Welcome, <?= htmlspecialchars($adminName, ENT_QUOTES, 'UTF-8') ?>!
+    </h2>
 
-    .admin-section h2 {
-        color: var(--navy);
-        margin-bottom: 8px;
-    }
+    <p>
+        Welcome to the DU EMBA MIS Student Portal Administration Panel.
+        Use the management sections below to control users, teachers,
+        academic sessions, semesters and courses.
+    </p>
 
-    .admin-section-description {
-        color: var(--muted);
-        margin-bottom: 20px;
-    }
+</section>
 
-    .admin-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 20px;
-    }
+<section>
 
-    .admin-card {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 15px;
-        padding: 24px;
-        background: white;
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        text-decoration: none;
-        color: var(--text);
-        transition: .2s ease;
-    }
+    <h2 class="dashboard-section-title">
+        Portal Management
+    </h2>
 
-    .admin-card:hover {
-        border-color: var(--navy);
-        transform: translateY(-3px);
-        box-shadow: 0 5px 18px rgba(16, 45, 80, .08);
-    }
+    <div class="dashboard-grid">
 
-    .admin-card-content strong {
-        display: block;
-        color: var(--navy);
-        font-size: 17px;
-        margin-bottom: 8px;
-    }
+        <?php foreach ($dashboardItems as $item): ?>
 
-    .admin-card-content span {
-        display: block;
-        color: var(--muted);
-        font-size: 13px;
-        line-height: 1.5;
-    }
+        <a class="dashboard-card"
+            href="<?= BASE_URL ?>/admin/<?= htmlspecialchars($item['link'], ENT_QUOTES, 'UTF-8') ?>">
 
-    .admin-card-arrow {
-        font-size: 23px;
-        color: var(--navy);
-    }
-
-    .admin-footer {
-        margin-top: 35px;
-        padding: 20px 0;
-        border-top: 1px solid var(--border);
-        color: var(--muted);
-        text-align: center;
-        font-size: 13px;
-    }
-
-    @media (max-width: 950px) {
-        .admin-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-    }
-
-    @media (max-width: 600px) {
-        .admin-dashboard {
-            padding: 0 12px;
-        }
-
-        .admin-header {
-            flex-direction: column;
-            align-items: flex-start;
-        }
-
-        .admin-grid {
-            grid-template-columns: 1fr;
-        }
-    }
-    </style>
-</head>
-
-<body>
-
-    <main class="admin-dashboard">
-
-        <!-- HEADER -->
-
-        <header class="admin-header">
-            <div>
-                <h1>DU EMBA MIS Admin Portal</h1>
-                <p>
-                    Welcome, <?= e($_SESSION['full_name'] ?? 'Administrator') ?>
-                </p>
+            <div class="dashboard-card-icon">
+                <?= htmlspecialchars($item['icon'], ENT_QUOTES, 'UTF-8') ?>
             </div>
 
-            <a href="<?= BASE_URL ?>/auth/logout.php">
-                Logout
-            </a>
-        </header>
+            <h3>
+                <?= htmlspecialchars($item['title'], ENT_QUOTES, 'UTF-8') ?>
+            </h3>
 
-        <!-- USER MANAGEMENT -->
-
-        <section class="admin-section">
-
-            <h2>User & Account Management</h2>
-
-            <p class="admin-section-description">
-                Manage users, accounts, roles and system access.
+            <p>
+                <?= htmlspecialchars($item['description'], ENT_QUOTES, 'UTF-8') ?>
             </p>
 
-            <div class="admin-grid">
+            <span class="dashboard-card-action">
+                Manage Section →
+            </span>
 
-                <a class="admin-card" href="<?= BASE_URL ?>/admin/users.php">
-                    <div class="admin-card-content">
-                        <strong>User Management</strong>
-                        <span>Create, view, edit and manage user accounts.</span>
-                    </div>
-                    <span class="admin-card-arrow">&rarr;</span>
-                </a>
+        </a>
 
-                <a class="admin-card" href="<?= BASE_URL ?>/admin/teachers.php">
-                    <div class="admin-card-content">
-                        <strong>Teacher Management</strong>
-                        <span>Manage teacher accounts and information.</span>
-                    </div>
-                    <span class="admin-card-arrow">&rarr;</span>
-                </a>
+        <?php endforeach; ?>
 
-            </div>
+    </div>
 
-        </section>
+</section>
 
-        <!-- ACADEMIC MANAGEMENT -->
+<div class="dashboard-footer-note">
+    <strong>DU EMBA MIS Student Portal</strong><br>
+    Administrator access is intended for authorized portal management.
+    Please log out after completing your administrative tasks.
+</div>
 
-        <section class="admin-section">
-
-            <h2>Academic Management</h2>
-
-            <p class="admin-section-description">
-                Manage academic sessions, semesters and curriculum.
-            </p>
-
-            <div class="admin-grid">
-
-                <a class="admin-card" href="<?= BASE_URL ?>/admin/academic-sessions.php">
-                    <div class="admin-card-content">
-                        <strong>Academic Sessions</strong>
-                        <span>Create and manage academic sessions.</span>
-                    </div>
-                    <span class="admin-card-arrow">&rarr;</span>
-                </a>
-
-                <a class="admin-card" href="<?= BASE_URL ?>/admin/semesters.php">
-                    <div class="admin-card-content">
-                        <strong>Semester Management</strong>
-                        <span>Create semesters and manage registration periods.</span>
-                    </div>
-                    <span class="admin-card-arrow">&rarr;</span>
-                </a>
-
-                <a class="admin-card" href="<?= BASE_URL ?>/admin/courses.php">
-                    <div class="admin-card-content">
-                        <strong>Course Management</strong>
-                        <span>Manage course codes, titles, categories and credits.</span>
-                    </div>
-                    <span class="admin-card-arrow">&rarr;</span>
-                </a>
-
-                <a class="admin-card" href="<?= BASE_URL ?>/admin/course-offerings.php">
-                    <div class="admin-card-content">
-                        <strong>Course Offerings & Schedule</strong>
-                        <span>Assign courses, teachers, class days, times and rooms.</span>
-                    </div>
-                    <span class="admin-card-arrow">&rarr;</span>
-                </a>
-
-            </div>
-
-        </section>
-
-        <!-- FINANCIAL MANAGEMENT -->
-
-        <section class="admin-section">
-
-            <h2>Financial Management</h2>
-
-            <p class="admin-section-description">
-                Manage student fees, payments and financial records.
-            </p>
-
-            <div class="admin-grid">
-
-                <div class="admin-card">
-                    <div class="admin-card-content">
-                        <strong>Fee Management</strong>
-                        <span>Fee structures and student payment management.</span>
-                    </div>
-                    <span class="admin-card-arrow">&rarr;</span>
-                </div>
-
-            </div>
-
-        </section>
-
-        <!-- PORTAL MANAGEMENT -->
-
-        <section class="admin-section">
-
-            <h2>Portal Management</h2>
-
-            <p class="admin-section-description">
-                Manage notices, announcements and portal settings.
-            </p>
-
-            <div class="admin-grid">
-
-                <div class="admin-card">
-                    <div class="admin-card-content">
-                        <strong>Notice Management</strong>
-                        <span>Create and publish student announcements.</span>
-                    </div>
-                    <span class="admin-card-arrow">&rarr;</span>
-                </div>
-
-            </div>
-
-        </section>
-
-        <footer class="admin-footer">
-            DU EMBA MIS Student Portal &copy; <?= date('Y') ?>
-            <br>
-            Administrator Workspace
-        </footer>
-
-    </main>
-
-</body>
-
-</html>
+<?php
+require_once __DIR__ . '/../includes/admin-footer.php';
+?>

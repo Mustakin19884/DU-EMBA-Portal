@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../includes/admin-header.php';
 require_role('admin');
 
 require_once __DIR__ . '/../config/database.php';
@@ -311,7 +312,8 @@ $sql = "
 ";
 $result = $conn->query($sql);
 
-require_once __DIR__ . '/../includes/header.php';
+require_once __DIR__ . '/../includes/admin-header.php';
+
 ?>
 
 <div class="page-header">
@@ -514,5 +516,3 @@ require_once __DIR__ . '/../includes/header.php';
         Back to Admin Dashboard
     </a>
 </div>
-
-<?php require_once __DIR__ . '/../includes/footer.php'; ?>

@@ -427,7 +427,7 @@ $offerings = $conn->query(
      ORDER BY s.start_date DESC, c.course_code ASC"
 )->fetch_all(MYSQLI_ASSOC);
 
-include __DIR__ . '/../includes/header.php';
+require_once __DIR__ . '/../includes/admin-header.php';
 ?>
 
 <style>
@@ -982,4 +982,4 @@ include __DIR__ . '/../includes/header.php';
 
 </div>
 
-<?php include __DIR__ . '/../includes/footer.php'; ?>
+<?php require_once __DIR__ . '/../includes/admin-footer.php'; ?>

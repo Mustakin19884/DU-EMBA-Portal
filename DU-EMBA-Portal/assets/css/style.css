@@ -877,3 +877,99 @@ button:hover,
         min-width: 1250px;
     }
 }
+
+
+
+/* ==========================================
+   ADMIN SIDEBAR + EXISTING PAGE CSS FIX
+========================================== */
+
+/* Admin layout must not inherit centered page layout */
+.admin-layout {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+    min-height: 100vh;
+    overflow-x: clip;
+}
+
+.admin-content {
+    flex: 1;
+    min-width: 0;
+    width: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Existing header and content inside admin area */
+.admin-content .site-main {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 32px 28px 48px;
+    min-height: calc(100vh - 60px);
+    box-sizing: border-box;
+}
+
+/* Page headings */
+.admin-content .page-header {
+    width: 100%;
+    max-width: none;
+    margin: 0 0 26px;
+}
+
+/* Cards and alerts */
+.admin-content .card,
+.admin-content .alert-success,
+.admin-content .alert-danger {
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+}
+
+/* Forms should not stretch buttons */
+.admin-content .card button,
+.admin-content .card .btn {
+    width: auto;
+}
+
+/* Tables */
+.admin-content .table-responsive {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+/* Course offerings table */
+.admin-content .offerings-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+}
+
+/* Course management table */
+.admin-content .dashboard {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+}
+
+/* Keep course dashboard sections properly sized */
+.admin-content .dashboard-content {
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+}
+
+/* Responsive admin content */
+@media (max-width: 768px) {
+    .admin-content .site-main {
+        padding: 22px 16px 32px;
+    }
+}
+
+@media (max-width: 480px) {
+    .admin-content .site-main {
+        padding: 18px 12px 28px;
+    }
+}

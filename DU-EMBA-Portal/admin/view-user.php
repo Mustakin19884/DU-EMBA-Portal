@@ -74,7 +74,7 @@ if (!$user) {
 }
 
 $pageTitle = 'View User';
-require_once __DIR__ . '/../includes/header.php';
+require_once __DIR__ . '/../includes/admin-header.php';
 ?>
 
 <style>

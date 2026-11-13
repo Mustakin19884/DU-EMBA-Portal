@@ -146,7 +146,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $pageTitle = 'Edit User';
-require_once __DIR__ . '/../includes/header.php';
+require_once __DIR__ . '/../includes/admin-header.php';
 ?>
 
 <style>
