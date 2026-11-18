@@ -1,90 +1,116 @@
 <?php
-declare(strict_types=1);
-
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../config/database.php';
 
 require_role('student');
 
-if (session_status() !== PHP_SESSION_ACTIVE) {
+$pageTitle = 'Course Registration';
+
+if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-$userId = (int)($_SESSION['user_id'] ?? $_SESSION['id'] ?? 0);
-$username = (string)($_SESSION['username'] ?? '');
+$userId = (int)($_SESSION['user_id'] ?? 0);
+$studentName = $_SESSION['full_name'] ?? 'Student';
 
-function registration_escape($value): string
+if (empty($_SESSION['course_registration_csrf'])) {
+    $_SESSION['course_registration_csrf'] = bin2hex(random_bytes(32));
+}
+
+$csrfToken = $_SESSION['course_registration_csrf'];
+
+$successMessage = '';
+$errorMessage = '';
+$student = null;
+$studentId = 0;
+$currentSemester = null;
+$offerings = [];
+$myRegistrations = [];
+
+/* =====================================================
+   HELPER FUNCTIONS
+===================================================== */
+
+function registration_escape($value)
 {
     return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
-function registration_query(mysqli $conn, string $sql, string $types = '', array $params = []): array
+function registration_query($sql, $types = '', $params = [])
 {
-    $stmt = $conn->prepare($sql);
+    global $conn;
 
-    if (!$stmt) {
-        error_log('Course registration SQL prepare error: ' . $conn->error);
-        return [];
-    }
+    try {
+        $stmt = $conn->prepare($sql);
 
-    if ($types !== '') {
-        $stmt->bind_param($types, ...$params);
-    }
+        if (!$stmt) {
+            error_log('Course Registration Prepare Error: ' . $conn->error);
+            return [];
+        }
 
-    if (!$stmt->execute()) {
-        error_log('Course registration SQL execute error: ' . $stmt->error);
+        if ($types !== '' && !empty($params)) {
+            $bindParams = [$types];
+
+            foreach ($params as $key => $value) {
+                $bindParams[] = &$params[$key];
+            }
+
+            call_user_func_array([$stmt, 'bind_param'], $bindParams);
+        }
+
+        if (!$stmt->execute()) {
+            error_log('Course Registration Execute Error: ' . $stmt->error);
+            $stmt->close();
+            return [];
+        }
+
+        $result = $stmt->get_result();
+        $rows = [];
+
+        if ($result) {
+            while ($row = $result->fetch_assoc()) {
+                $rows[] = $row;
+            }
+        }
+
         $stmt->close();
+
+        return $rows;
+
+    } catch (Throwable $e) {
+        error_log('Course Registration Error: ' . $e->getMessage());
         return [];
     }
-
-    $result = $stmt->get_result();
-    $rows = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
-
-    $stmt->close();
-
-    return $rows;
 }
 
-function registration_one(mysqli $conn, string $sql, string $types = '', array $params = []): ?array
+function registration_one($sql, $types = '', $params = [])
 {
-    $rows = registration_query($conn, $sql, $types, $params);
+    $rows = registration_query($sql, $types, $params);
     return $rows[0] ?? null;
 }
 
-function registration_time($time): string
+function registration_time($time)
 {
-    if (!$time) {
-        return 'Not scheduled';
+    if (empty($time)) {
+        return '';
     }
 
-    $timestamp = strtotime((string)$time);
-    return $timestamp ? date('h:i A', $timestamp) : 'Not scheduled';
+    $timestamp = strtotime($time);
+
+    return $timestamp ? date('h:i A', $timestamp) : '';
 }
 
-/*
-|--------------------------------------------------------------------------
-| Resolve student
-|--------------------------------------------------------------------------
-*/
-
-if ($userId <= 0 && $username !== '') {
-    $user = registration_one(
-        $conn,
-        "SELECT id FROM users WHERE username = ? LIMIT 1",
-        "s",
-        [$username]
-    );
-
-    $userId = (int)($user['id'] ?? 0);
-}
-
-$student = null;
+/* =====================================================
+   FIND STUDENT PROFILE
+===================================================== */
 
 if ($userId > 0) {
     $student = registration_one(
-        $conn,
-        "SELECT id, student_id, user_id
+        "SELECT
+            id,
+            student_id,
+            user_id
          FROM students
          WHERE user_id = ?
          LIMIT 1",
@@ -93,73 +119,52 @@ if ($userId > 0) {
     );
 }
 
-$studentTableId = (int)($student['id'] ?? 0);
-
-if ($studentTableId <= 0) {
-    http_response_code(403);
-    exit('Student profile not found. Please contact the department office.');
+if ($student) {
+    $studentId = (int)$student['id'];
 }
 
-/*
-|--------------------------------------------------------------------------
-| CSRF protection
-|--------------------------------------------------------------------------
-*/
-
-if (empty($_SESSION['course_registration_token'])) {
-    $_SESSION['course_registration_token'] = bin2hex(random_bytes(32));
-}
-
-$csrfToken = $_SESSION['course_registration_token'];
-
-/*
-|--------------------------------------------------------------------------
-| Current semester
-|--------------------------------------------------------------------------
-*/
+/* =====================================================
+   GET CURRENT ACTIVE SEMESTER
+===================================================== */
 
 $currentSemester = registration_one(
-    $conn,
-    "SELECT id, semester_name, start_date, end_date, registration_open, status
+    "SELECT
+        id,
+        semester_name,
+        status,
+        registration_open,
+        start_date,
+        end_date
      FROM semesters
      WHERE status = 'active'
-     ORDER BY id DESC
+     ORDER BY start_date DESC
      LIMIT 1"
 );
 
-$currentSemesterId = (int)($currentSemester['id'] ?? 0);
+$currentSemesterId = $currentSemester
+    ? (int)$currentSemester['id']
+    : 0;
 
-$semesterRegistrationOpen =
-    $currentSemester && (int)$currentSemester['registration_open'] === 1;
+/* =====================================================
+   HANDLE COURSE REGISTRATION
+===================================================== */
 
-/*
-|--------------------------------------------------------------------------
-| Handle course registration
-|--------------------------------------------------------------------------
-*/
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
 
-$message = '';
-$messageType = '';
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-
-    $submittedToken = (string)($_POST['csrf_token'] ?? '');
+    $submittedToken = $_POST['csrf_token'] ?? '';
     $offeringId = (int)($_POST['offering_id'] ?? 0);
 
     if (!hash_equals($csrfToken, $submittedToken)) {
 
-        $message = 'Invalid request. Please refresh the page and try again.';
-        $messageType = 'error';
+        $errorMessage = 'Invalid request. Please refresh the page and try again.';
+
+    } elseif ($studentId <= 0) {
+
+        $errorMessage = 'Your student profile is not linked yet. Please contact the Academic Office.';
 
     } elseif ($offeringId <= 0) {
 
-        $message = 'Please select a valid course.';
-        $messageType = 'error';
-
-    } elseif (!$currentSemester || !$semesterRegistrationOpen) {
-
-        $message = 'Course registration is currently closed for this semester.';
-        $messageType = 'error';
+        $errorMessage = 'Please select a valid course.';
 
     } else {
 
@@ -168,8 +173,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->begin_transaction();
 
             /*
-             * Lock the selected course offering.
-             * This helps prevent two students from taking the last seat simultaneously.
+             * Lock the selected offering while checking seats.
+             * This helps prevent two simultaneous registrations
+             * from exceeding the course capacity.
              */
 
             $stmt = $conn->prepare(
@@ -179,218 +185,219 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     co.semester_id,
                     co.capacity,
                     co.registration_open,
-                    c.course_code,
-                    c.course_title,
-                    c.credit_hours,
-                    c.is_active
+                    sem.registration_open AS semester_registration_open,
+                    sem.status AS semester_status
                  FROM course_offerings co
-                 INNER JOIN courses c ON c.id = co.course_id
+                 INNER JOIN semesters sem ON sem.id = co.semester_id
                  WHERE co.id = ?
-                   AND co.semester_id = ?
                  LIMIT 1
                  FOR UPDATE"
             );
 
             if (!$stmt) {
-                throw new RuntimeException('Unable to prepare course query.');
+                throw new Exception('Unable to check course availability.');
             }
 
-            $stmt->bind_param("ii", $offeringId, $currentSemesterId);
+            $stmt->bind_param("i", $offeringId);
             $stmt->execute();
 
             $offeringResult = $stmt->get_result();
-            $offering = $offeringResult ? $offeringResult->fetch_assoc() : null;
+            $offering = $offeringResult->fetch_assoc();
 
             $stmt->close();
 
             if (!$offering) {
-
-                throw new RuntimeException('This course offering is not available.');
-
+                throw new Exception('Selected course offering was not found.');
             }
 
-            if ((int)$offering['is_active'] !== 1) {
+            if ($currentSemesterId <= 0 ||
+                (int)$offering['semester_id'] !== $currentSemesterId) {
+                throw new Exception('You can only register for the current active semester.');
+            }
 
-                throw new RuntimeException('This course is currently inactive.');
+            if ($offering['semester_status'] !== 'active') {
+                throw new Exception('This semester is not active.');
+            }
 
+            if ((int)$offering['semester_registration_open'] !== 1) {
+                throw new Exception('Semester course registration is currently closed.');
             }
 
             if ((int)$offering['registration_open'] !== 1) {
-
-                throw new RuntimeException('Registration is closed for this course.');
-
+                throw new Exception('Registration for this course is currently closed.');
             }
 
-            /*
-             * Check duplicate active registration.
-             */
+            /* ---------------------------------------------
+               CHECK WHETHER STUDENT ALREADY REGISTERED
+            --------------------------------------------- */
 
             $stmt = $conn->prepare(
-                "SELECT id
+                "SELECT id, status
                  FROM course_registrations
                  WHERE student_id = ?
                    AND offering_id = ?
-                   AND status = 'registered'
                  LIMIT 1"
             );
 
             if (!$stmt) {
-                throw new RuntimeException('Unable to check existing registration.');
+                throw new Exception('Unable to verify your registration.');
             }
 
-            $stmt->bind_param("ii", $studentTableId, $offeringId);
+            $stmt->bind_param("ii", $studentId, $offeringId);
             $stmt->execute();
 
-            $duplicateResult = $stmt->get_result();
-            $duplicate = $duplicateResult ? $duplicateResult->fetch_assoc() : null;
+            $existingResult = $stmt->get_result();
+            $existingRegistration = $existingResult->fetch_assoc();
 
             $stmt->close();
 
-            if ($duplicate) {
-                throw new RuntimeException('You have already registered for this course.');
+            if ($existingRegistration &&
+                $existingRegistration['status'] === 'registered') {
+                throw new Exception('You have already registered for this course.');
             }
 
-            /*
-             * Check course capacity.
-             */
+            /* ---------------------------------------------
+               PREVENT SAME COURSE TWICE IN SAME SEMESTER
+            --------------------------------------------- */
 
             $stmt = $conn->prepare(
-                "SELECT COUNT(*) AS total
+                "SELECT cr.id
+                 FROM course_registrations cr
+                 INNER JOIN course_offerings co
+                    ON co.id = cr.offering_id
+                 WHERE cr.student_id = ?
+                   AND co.course_id = ?
+                   AND co.semester_id = ?
+                   AND cr.status = 'registered'
+                 LIMIT 1"
+            );
+
+            if (!$stmt) {
+                throw new Exception('Unable to verify duplicate course registration.');
+            }
+
+            $courseId = (int)$offering['course_id'];
+
+            $stmt->bind_param(
+                "iii",
+                $studentId,
+                $courseId,
+                $currentSemesterId
+            );
+
+            $stmt->execute();
+
+            $duplicateResult = $stmt->get_result();
+            $duplicateCourse = $duplicateResult->fetch_assoc();
+
+            $stmt->close();
+
+            if ($duplicateCourse) {
+                throw new Exception('You are already registered for this course in this semester.');
+            }
+
+            /* ---------------------------------------------
+               CHECK COURSE CAPACITY
+            --------------------------------------------- */
+
+            $stmt = $conn->prepare(
+                "SELECT COUNT(*) AS registered_count
                  FROM course_registrations
                  WHERE offering_id = ?
                    AND status = 'registered'"
             );
 
             if (!$stmt) {
-                throw new RuntimeException('Unable to check course capacity.');
+                throw new Exception('Unable to check available seats.');
             }
 
             $stmt->bind_param("i", $offeringId);
             $stmt->execute();
 
-            $capacityResult = $stmt->get_result();
-            $capacityData = $capacityResult ? $capacityResult->fetch_assoc() : [];
+            $countResult = $stmt->get_result();
+            $countData = $countResult->fetch_assoc();
 
             $stmt->close();
 
-            $registeredCount = (int)($capacityData['total'] ?? 0);
+            $registeredCount = (int)($countData['registered_count'] ?? 0);
             $capacity = (int)$offering['capacity'];
 
             if ($capacity > 0 && $registeredCount >= $capacity) {
-                throw new RuntimeException('Sorry, this course has reached its registration capacity.');
+                throw new Exception('Sorry, this course is already full.');
             }
 
-            /*
-             * Check weekly schedule conflict.
-             */
+            /* ---------------------------------------------
+               RESTORE DROPPED REGISTRATION OR INSERT NEW
+            --------------------------------------------- */
 
-            $newSchedule = registration_one(
-                $conn,
-                "SELECT class_day, start_time, end_time
-                 FROM course_schedules
-                 WHERE offering_id = ?
-                 LIMIT 1",
-                "i",
-                [$offeringId]
-            );
+            if ($existingRegistration &&
+                $existingRegistration['status'] === 'dropped') {
 
-            if ($newSchedule && !empty($newSchedule['class_day'])) {
+                $registrationId = (int)$existingRegistration['id'];
 
-                $conflictingCourse = registration_one(
-                    $conn,
-                    "SELECT
-                        c.course_code,
-                        c.course_title
-                     FROM course_registrations cr
-                     INNER JOIN course_offerings co ON co.id = cr.offering_id
-                     INNER JOIN courses c ON c.id = co.course_id
-                     INNER JOIN course_schedules cs ON cs.offering_id = co.id
-                     WHERE cr.student_id = ?
-                       AND cr.status = 'registered'
-                       AND co.semester_id = ?
-                       AND co.id <> ?
-                       AND cs.class_day = ?
-                       AND TIME(?) < cs.end_time
-                       AND TIME(?) > cs.start_time
-                     LIMIT 1",
-                    "iiisss",
-                    [
-                        $studentTableId,
-                        $currentSemesterId,
-                        $offeringId,
-                        $newSchedule['class_day'],
-                        $newSchedule['start_time'],
-                        $newSchedule['end_time']
-                    ]
+                $stmt = $conn->prepare(
+                    "UPDATE course_registrations
+                     SET status = 'registered',
+                         registered_at = NOW()
+                     WHERE id = ?
+                       AND student_id = ?"
                 );
 
-                if ($conflictingCourse) {
-                    throw new RuntimeException(
-                        'Schedule conflict with ' .
-                        $conflictingCourse['course_code'] . ' - ' .
-                        $conflictingCourse['course_title'] . '.'
-                    );
+                if (!$stmt) {
+                    throw new Exception('Unable to restore your registration.');
                 }
+
+                $stmt->bind_param("ii", $registrationId, $studentId);
+
+                if (!$stmt->execute()) {
+                    throw new Exception('Unable to restore your registration.');
+                }
+
+                $stmt->close();
+
+            } elseif (!$existingRegistration) {
+
+                $stmt = $conn->prepare(
+                    "INSERT INTO course_registrations
+                        (student_id, offering_id, status, registered_at)
+                     VALUES (?, ?, 'registered', NOW())"
+                );
+
+                if (!$stmt) {
+                    throw new Exception('Unable to save your registration.');
+                }
+
+                $stmt->bind_param("ii", $studentId, $offeringId);
+
+                if (!$stmt->execute()) {
+                    throw new Exception('Unable to save your registration.');
+                }
+
+                $stmt->close();
             }
-
-            /*
-             * Create registration.
-             */
-
-            $stmt = $conn->prepare(
-                "INSERT INTO course_registrations
-                    (student_id, offering_id, status, registered_at)
-                 VALUES (?, ?, 'registered', NOW())"
-            );
-
-            if (!$stmt) {
-                throw new RuntimeException('Unable to prepare registration.');
-            }
-
-            $stmt->bind_param("ii", $studentTableId, $offeringId);
-
-            if (!$stmt->execute()) {
-                throw new RuntimeException('Unable to complete course registration.');
-            }
-
-            $stmt->close();
 
             $conn->commit();
 
-            $message = 'Course successfully registered!';
-            $messageType = 'success';
+            $successMessage = 'Course registration completed successfully!';
 
         } catch (Throwable $e) {
 
-            try {
-                $conn->rollback();
-            } catch (Throwable $rollbackError) {
-                error_log($rollbackError->getMessage());
-            }
+            $conn->rollback();
 
-            $message = $e instanceof RuntimeException
-                ? $e->getMessage()
-                : 'An unexpected error occurred. Please try again.';
+            $errorMessage = $e->getMessage();
 
-            error_log('Course registration error: ' . $e->getMessage());
-
-            $messageType = 'error';
+            error_log('Course Registration Transaction Error: ' . $e->getMessage());
         }
     }
 }
 
-/*
-|--------------------------------------------------------------------------
-| Available courses
-|--------------------------------------------------------------------------
-*/
-
-$availableCourses = [];
+/* =====================================================
+   GET COURSE OFFERINGS FOR CURRENT SEMESTER
+===================================================== */
 
 if ($currentSemesterId > 0) {
 
-    $availableCourses = registration_query(
-        $conn,
+    $offerings = registration_query(
         "SELECT
             co.id AS offering_id,
             co.capacity,
@@ -403,53 +410,37 @@ if ($currentSemesterId > 0) {
             cs.start_time,
             cs.end_time,
             cs.room,
-
             (
                 SELECT COUNT(*)
                 FROM course_registrations cr
                 WHERE cr.offering_id = co.id
                   AND cr.status = 'registered'
-            ) AS registered_count,
-
-            (
-                SELECT COUNT(*)
-                FROM course_registrations cr2
-                WHERE cr2.offering_id = co.id
-                  AND cr2.student_id = ?
-                  AND cr2.status = 'registered'
-            ) AS already_registered
-
+            ) AS registered_count
          FROM course_offerings co
          INNER JOIN courses c ON c.id = co.course_id
          LEFT JOIN teachers t ON t.id = co.teacher_id
          LEFT JOIN users u ON u.id = t.user_id
          LEFT JOIN course_schedules cs ON cs.offering_id = co.id
-
          WHERE co.semester_id = ?
            AND c.is_active = 1
-
          ORDER BY c.course_code ASC",
-        "ii",
-        [$studentTableId, $currentSemesterId]
+        "i",
+        [$currentSemesterId]
     );
 }
 
-/*
-|--------------------------------------------------------------------------
-| My registered courses
-|--------------------------------------------------------------------------
-*/
+/* =====================================================
+   GET STUDENT REGISTRATIONS
+===================================================== */
 
-$myCourses = [];
+if ($studentId > 0 && $currentSemesterId > 0) {
 
-if ($currentSemesterId > 0) {
-
-    $myCourses = registration_query(
-        $conn,
+    $myRegistrations = registration_query(
         "SELECT
             cr.id AS registration_id,
             cr.status,
             cr.registered_at,
+            co.id AS offering_id,
             c.course_code,
             c.course_title,
             c.credit_hours,
@@ -458,33 +449,28 @@ if ($currentSemesterId > 0) {
             cs.start_time,
             cs.end_time,
             cs.room
-
          FROM course_registrations cr
          INNER JOIN course_offerings co ON co.id = cr.offering_id
          INNER JOIN courses c ON c.id = co.course_id
          LEFT JOIN teachers t ON t.id = co.teacher_id
          LEFT JOIN users u ON u.id = t.user_id
          LEFT JOIN course_schedules cs ON cs.offering_id = co.id
-
          WHERE cr.student_id = ?
            AND co.semester_id = ?
-           AND cr.status = 'registered'
-
-         ORDER BY c.course_code ASC",
+         ORDER BY cr.registered_at DESC",
         "ii",
-        [$studentTableId, $currentSemesterId]
+        [$studentId, $currentSemesterId]
     );
 }
 
-$myCourseCount = count($myCourses);
-$totalCredits = 0;
+/* =====================================================
+   CALCULATE COURSE REGISTRATION STATUS
+===================================================== */
 
-foreach ($myCourses as $course) {
-    $totalCredits += (float)$course['credit_hours'];
-}
-
-$dashboardLink = BASE_URL . '/student/dashboard.php';
-$logoutLink = BASE_URL . '/auth/logout.php';
+$semesterRegistrationOpen = (
+    $currentSemester &&
+    (int)$currentSemester['registration_open'] === 1
+);
 
 ?>
 
@@ -496,7 +482,7 @@ $logoutLink = BASE_URL . '/auth/logout.php';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>Course Registration | DU EMBA MIS Portal</title>
+    <title><?= registration_escape($pageTitle) ?></title>
 
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css">
 
@@ -505,15 +491,13 @@ $logoutLink = BASE_URL . '/auth/logout.php';
         --navy: #102d50;
         --navy-light: #1c456e;
         --beige: #f4efe5;
-        --bg: #f5f7fb;
+        --white: #ffffff;
         --text: #263548;
         --muted: #687789;
-        --border: #e5e9f0;
-        --white: #ffffff;
-        --green: #16845b;
-        --orange: #c77a19;
-        --red: #c34d4d;
-        --shadow: 0 8px 24px rgba(16, 45, 80, .06);
+        --border: #e1e5eb;
+        --green: #198754;
+        --red: #dc3545;
+        --orange: #d97706;
     }
 
     * {
@@ -522,394 +506,308 @@ $logoutLink = BASE_URL . '/auth/logout.php';
 
     body {
         margin: 0;
-        background: var(--bg);
+        background: #f5f7fa;
         color: var(--text);
         font-family: Arial, Helvetica, sans-serif;
     }
 
-    a {
-        color: inherit;
-        text-decoration: none;
+    .registration-container {
+        width: calc(100% - 40px);
+        max-width: 1440px;
+        margin: 30px auto;
     }
 
-    .cr-shell {
-        width: min(1440px, calc(100% - 48px));
-        margin: 0 auto;
-        padding: 26px 0 45px;
-    }
-
-    .cr-header {
+    .topbar {
+        background: var(--white);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px 22px;
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 15px;
-        background: white;
-        padding: 17px 22px;
-        border: 1px solid var(--border);
-        border-radius: 15px;
-        box-shadow: var(--shadow);
         margin-bottom: 22px;
     }
 
-    .cr-brand {
+    .topbar h2 {
+        color: var(--navy);
+        font-size: 20px;
+        margin: 0;
+    }
+
+    .topbar p {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 5px 0 0;
+    }
+
+    .topbar-links {
         display: flex;
-        align-items: center;
-        gap: 13px;
+        gap: 10px;
     }
 
-    .cr-logo {
-        width: 46px;
-        height: 46px;
-        display: grid;
-        place-items: center;
+    .topbar-links a {
+        display: inline-block;
+        padding: 9px 14px;
+        border-radius: 7px;
+        font-size: 13px;
+        font-weight: 600;
+        text-decoration: none;
+    }
+
+    .dashboard-link {
+        background: #edf4fb;
+        color: var(--navy);
+    }
+
+    .logout-link {
         background: var(--navy);
-        color: white;
-        border-radius: 12px;
-        font-weight: 800;
+        color: var(--white);
     }
 
-    .cr-brand h2 {
+    .page-banner {
+        background: linear-gradient(115deg, var(--navy), var(--navy-light));
+        color: var(--white);
+        border-radius: 12px;
+        padding: 25px 28px;
+        margin-bottom: 22px;
+    }
+
+    .page-banner h1 {
+        font-size: 24px;
+        margin: 0 0 8px;
+    }
+
+    .page-banner p {
+        font-size: 13px;
+        color: #e0e8f1;
+        margin: 0;
+    }
+
+    .semester-panel {
+        background: var(--white);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 18px 20px;
+        margin-bottom: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 15px;
+    }
+
+    .semester-panel h3 {
+        margin: 0 0 7px;
+        color: var(--navy);
+        font-size: 16px;
+    }
+
+    .semester-panel p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+    }
+
+    .badge {
+        display: inline-block;
+        padding: 6px 11px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .badge.open {
+        background: #e8f5ed;
+        color: var(--green);
+    }
+
+    .badge.closed {
+        background: #fdebec;
+        color: var(--red);
+    }
+
+    .badge.full {
+        background: #fff4df;
+        color: var(--orange);
+    }
+
+    .message {
+        padding: 13px 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        margin-bottom: 18px;
+    }
+
+    .message.success {
+        background: #e8f5ed;
+        border: 1px solid #c6e7d1;
+        color: #146c43;
+    }
+
+    .message.error {
+        background: #fdebec;
+        border: 1px solid #f5c2c7;
+        color: #842029;
+    }
+
+    .content-card {
+        background: var(--white);
+        border: 1px solid var(--border);
+        border-radius: 11px;
+        padding: 22px;
+        margin-bottom: 22px;
+    }
+
+    .section-heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 18px;
+    }
+
+    .section-heading h2 {
         color: var(--navy);
         font-size: 17px;
         margin: 0;
     }
 
-    .cr-brand p {
-        color: var(--muted);
-        font-size: 12px;
-        margin: 4px 0 0;
-    }
-
-    .cr-actions {
-        display: flex;
-        gap: 9px;
-    }
-
-    .cr-btn {
-        display: inline-flex;
-        justify-content: center;
-        align-items: center;
-        padding: 10px 15px;
-        border: 1px solid var(--border);
-        border-radius: 9px;
-        background: white;
-        color: var(--navy);
-        font-size: 12px;
-        font-weight: 700;
-        cursor: pointer;
-    }
-
-    .cr-btn.primary {
-        background: var(--navy);
-        color: white;
-        border-color: var(--navy);
-    }
-
-    .cr-btn.disabled {
-        background: #edf0f4;
-        color: #8793a1;
-        border-color: #edf0f4;
-        cursor: not-allowed;
-    }
-
-    .cr-hero {
-        background: linear-gradient(120deg, #102d50, #1d4b76);
-        color: white;
-        padding: 27px 30px;
-        border-radius: 16px;
-        margin-bottom: 20px;
-        box-shadow: 0 12px 28px rgba(16, 45, 80, .14);
-    }
-
-    .cr-hero small {
-        color: #d7e2ef;
-        text-transform: uppercase;
-        font-size: 11px;
-        letter-spacing: 1.2px;
-    }
-
-    .cr-hero h1 {
-        margin: 9px 0 7px;
-        font-size: 27px;
-    }
-
-    .cr-hero p {
-        margin: 0;
-        color: #d7e2ef;
-        font-size: 13px;
-    }
-
-    .cr-summary {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 15px;
-        margin-bottom: 20px;
-    }
-
-    .cr-stat {
-        background: white;
-        border: 1px solid var(--border);
-        border-radius: 13px;
-        padding: 18px;
-        box-shadow: var(--shadow);
-    }
-
-    .cr-stat span {
-        display: block;
-        color: var(--muted);
-        font-size: 11px;
-        margin-bottom: 9px;
-    }
-
-    .cr-stat strong {
-        display: block;
-        color: var(--navy);
-        font-size: 23px;
-    }
-
-    .cr-panel {
-        background: white;
-        border: 1px solid var(--border);
-        border-radius: 15px;
-        padding: 21px;
-        margin-bottom: 20px;
-        box-shadow: var(--shadow);
-    }
-
-    .cr-panel-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        margin-bottom: 17px;
-    }
-
-    .cr-panel-head h3 {
-        color: var(--navy);
-        font-size: 16px;
-        margin: 0;
-    }
-
-    .cr-panel-head span {
-        color: var(--muted);
-        font-size: 11px;
-    }
-
-    .cr-message {
-        padding: 14px 16px;
-        border-radius: 10px;
-        font-size: 13px;
-        margin-bottom: 20px;
-        line-height: 1.5;
-    }
-
-    .cr-message.success {
-        background: #e9f5ef;
-        color: var(--green);
-        border: 1px solid #cce9d9;
-    }
-
-    .cr-message.error {
-        background: #fdecec;
-        color: var(--red);
-        border: 1px solid #f5cccc;
-    }
-
-    .cr-semester {
-        background: var(--beige);
-        border-radius: 11px;
-        padding: 15px 17px;
-        margin-bottom: 17px;
-    }
-
-    .cr-semester strong {
-        display: block;
-        color: var(--navy);
-        font-size: 15px;
-        margin-bottom: 5px;
-    }
-
-    .cr-semester span {
-        color: var(--muted);
-        font-size: 11px;
-    }
-
-    .cr-table-wrap {
+    .table-wrap {
+        width: 100%;
         overflow-x: auto;
     }
 
-    .cr-table {
+    table {
         width: 100%;
-        min-width: 850px;
         border-collapse: collapse;
+        min-width: 950px;
     }
 
-    .cr-table th {
+    th {
+        background: #f3f6fa;
+        color: var(--navy);
         text-align: left;
-        padding: 12px 10px;
-        background: #f7f9fc;
-        color: var(--muted);
-        font-size: 11px;
+        font-size: 12px;
+        padding: 13px 10px;
         white-space: nowrap;
     }
 
-    .cr-table td {
-        padding: 14px 10px;
-        border-bottom: 1px solid var(--border);
+    td {
+        border-bottom: 1px solid #edf0f3;
+        padding: 13px 10px;
         font-size: 12px;
         vertical-align: middle;
     }
 
-    .cr-table td strong {
-        display: block;
-        color: var(--navy);
-        margin-bottom: 4px;
+    tbody tr:last-child td {
+        border-bottom: none;
     }
 
-    .cr-muted {
+    .course-title {
+        color: var(--navy);
+        font-weight: 600;
+    }
+
+    .course-code {
         color: var(--muted);
-        font-size: 10px;
+        font-size: 11px;
+        margin-top: 4px;
     }
 
-    .cr-status {
-        display: inline-block;
-        padding: 5px 9px;
-        border-radius: 20px;
-        font-size: 10px;
-        font-weight: 700;
-        white-space: nowrap;
+    .seat-info {
+        line-height: 1.7;
     }
 
-    .cr-status.open {
-        color: var(--green);
-        background: #e9f5ef;
-    }
-
-    .cr-status.closed {
-        color: var(--red);
-        background: #fdecec;
-    }
-
-    .cr-status.registered {
+    .seat-info strong {
         color: var(--navy);
-        background: #eaf0f8;
     }
 
-    .cr-status.full {
-        color: var(--orange);
-        background: #fff3df;
-    }
-
-    .cr-register-form {
+    .register-form {
         margin: 0;
     }
 
-    .cr-register-btn {
-        border: 0;
-        border-radius: 8px;
-        padding: 9px 12px;
+    .register-button {
+        border: none;
         background: var(--navy);
-        color: white;
-        font-size: 11px;
-        font-weight: 700;
+        color: var(--white);
+        padding: 9px 14px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 600;
         cursor: pointer;
         white-space: nowrap;
     }
 
-    .cr-register-btn:hover {
+    .register-button:hover {
         background: var(--navy-light);
     }
 
-    .cr-register-btn:disabled {
-        background: #e8ebef;
-        color: #8793a1;
+    .register-button:disabled {
+        background: #aab3bd;
         cursor: not-allowed;
     }
 
-    .cr-empty {
-        padding: 22px;
-        border-radius: 10px;
-        background: #f8f9fb;
+    .empty-state {
         text-align: center;
+        background: #f8fafc;
+        border: 1px dashed #d8e0e8;
+        padding: 28px 15px;
+        border-radius: 8px;
+        color: var(--muted);
+        font-size: 13px;
+    }
+
+    .empty-state strong {
+        display: block;
+        color: var(--navy);
+        margin-bottom: 7px;
+        font-size: 14px;
+    }
+
+    .footer {
+        text-align: center;
+        padding: 18px 10px;
         color: var(--muted);
         font-size: 12px;
-        line-height: 1.6;
     }
 
-    .cr-note {
-        color: var(--muted);
-        font-size: 11px;
-        line-height: 1.7;
-        margin-top: 13px;
-    }
-
-    .cr-footer {
-        text-align: center;
-        color: #8b97a6;
-        font-size: 11px;
-        padding: 10px 0;
-    }
-
-    @media(max-width: 750px) {
-        .cr-summary {
-            grid-template-columns: 1fr 1fr;
+    @media (max-width: 650px) {
+        .registration-container {
+            width: calc(100% - 22px);
+            margin: 12px auto;
         }
 
-        .cr-shell {
-            width: calc(100% - 24px);
-            padding-top: 12px;
-        }
-
-        .cr-header {
-            padding: 13px;
-        }
-
-        .cr-brand h2 {
-            font-size: 13px;
-        }
-
-        .cr-brand p {
-            font-size: 10px;
-        }
-
-        .cr-actions {
-            gap: 5px;
-        }
-
-        .cr-btn {
-            padding: 9px 10px;
-            font-size: 10px;
-        }
-
-        .cr-hero {
-            padding: 22px;
-        }
-
-        .cr-hero h1 {
-            font-size: 23px;
-        }
-
-        .cr-panel {
+        .topbar {
+            flex-direction: column;
+            align-items: flex-start;
             padding: 15px;
         }
-    }
 
-    @media(max-width: 420px) {
-        .cr-summary {
-            grid-template-columns: 1fr;
+        .topbar-links {
+            width: 100%;
         }
 
-        .cr-header {
+        .topbar-links a {
+            flex: 1;
+            text-align: center;
+        }
+
+        .page-banner {
+            padding: 22px 18px;
+        }
+
+        .page-banner h1 {
+            font-size: 21px;
+        }
+
+        .semester-panel {
             align-items: flex-start;
             flex-direction: column;
         }
 
-        .cr-actions {
-            width: 100%;
-        }
-
-        .cr-actions .cr-btn {
-            flex: 1;
+        .content-card {
+            padding: 15px;
         }
     }
     </style>
@@ -918,28 +816,24 @@ $logoutLink = BASE_URL . '/auth/logout.php';
 
 <body>
 
-    <div class="cr-shell">
+    <div class="registration-container">
 
-        <!-- Header -->
+        <!-- TOP NAVIGATION -->
 
-        <header class="cr-header">
+        <header class="topbar">
 
-            <div class="cr-brand">
-                <div class="cr-logo">DU</div>
-
-                <div>
-                    <h2>DU EMBA MIS Portal</h2>
-                    <p>Department of Management Information Systems</p>
-                </div>
+            <div>
+                <h2>DU EMBA MIS Student Portal</h2>
+                <p>Course Registration</p>
             </div>
 
-            <div class="cr-actions">
+            <div class="topbar-links">
 
-                <a class="cr-btn" href="<?= registration_escape($dashboardLink) ?>">
+                <a class="dashboard-link" href="<?= BASE_URL ?>/student/dashboard.php">
                     Dashboard
                 </a>
 
-                <a class="cr-btn primary" href="<?= registration_escape($logoutLink) ?>">
+                <a class="logout-link" href="<?= BASE_URL ?>/auth/logout.php">
                     Logout
                 </a>
 
@@ -947,239 +841,242 @@ $logoutLink = BASE_URL . '/auth/logout.php';
 
         </header>
 
-        <!-- Hero -->
 
-        <section class="cr-hero">
+        <!-- PAGE BANNER -->
 
-            <small>Student Services</small>
+        <section class="page-banner">
 
             <h1>Course Registration</h1>
 
             <p>
-                Explore available courses and register for your current academic semester.
+                View available courses and register for your current semester.
             </p>
 
         </section>
 
-        <!-- Messages -->
 
-        <?php if ($message !== ''): ?>
+        <!-- ALERT MESSAGES -->
 
-        <div class="cr-message <?= registration_escape($messageType) ?>">
-            <?= registration_escape($message) ?>
+        <?php if ($successMessage): ?>
+
+        <div class="message success">
+            <?= registration_escape($successMessage) ?>
         </div>
 
         <?php endif; ?>
 
-        <!-- Semester status -->
+        <?php if ($errorMessage): ?>
+
+        <div class="message error">
+            <?= registration_escape($errorMessage) ?>
+        </div>
+
+        <?php endif; ?>
+
+
+        <!-- CURRENT SEMESTER -->
 
         <?php if ($currentSemester): ?>
 
-        <div class="cr-semester">
+        <section class="semester-panel">
 
-            <strong>
-                <?= registration_escape($currentSemester['semester_name']) ?>
-            </strong>
+            <div>
+                <h3>
+                    <?= registration_escape($currentSemester['semester_name']) ?>
+                </h3>
 
-            <span>
-                Registration period:
+                <p>
+                    Current Active Academic Semester
+                </p>
+            </div>
 
-                <?= $semesterRegistrationOpen ? 'Open' : 'Closed' ?>
+            <?php if ($semesterRegistrationOpen): ?>
 
-                &nbsp; | &nbsp;
-
-                <?= registration_escape($currentSemester['start_date']) ?>
-                –
-                <?= registration_escape($currentSemester['end_date']) ?>
+            <span class="badge open">
+                Semester Registration Open
             </span>
 
-        </div>
+            <?php else: ?>
+
+            <span class="badge closed">
+                Semester Registration Closed
+            </span>
+
+            <?php endif; ?>
+
+        </section>
 
         <?php else: ?>
 
-        <div class="cr-message error">
-            No active semester is configured. Please contact the Academic Office.
+        <div class="message error">
+            No active semester has been configured by the Academic Office.
         </div>
 
         <?php endif; ?>
 
-        <!-- Summary -->
 
-        <section class="cr-summary">
+        <!-- AVAILABLE COURSE OFFERINGS -->
 
-            <div class="cr-stat">
-                <span>Current Semester</span>
+        <section class="content-card">
 
-                <strong style="font-size:16px">
-                    <?= registration_escape($currentSemester['semester_name'] ?? 'Not configured') ?>
-                </strong>
+            <div class="section-heading">
+                <h2>Available Course Offerings</h2>
             </div>
 
-            <div class="cr-stat">
-                <span>My Registered Courses</span>
-                <strong><?= (int)$myCourseCount ?></strong>
+            <?php if ($studentId <= 0): ?>
+
+            <div class="empty-state">
+                <strong>Student Profile Not Found</strong>
+                Your account is not linked with a student profile yet.
+                Please contact the Academic Office.
             </div>
 
-            <div class="cr-stat">
-                <span>Total Registered Credits</span>
-                <strong><?= number_format($totalCredits, 1) ?></strong>
+            <?php elseif (!$currentSemester): ?>
+
+            <div class="empty-state">
+                <strong>No Active Semester</strong>
+                Course offerings will appear after the Academic Office
+                activates a semester.
             </div>
 
-        </section>
+            <?php elseif (empty($offerings)): ?>
 
-        <!-- Available Courses -->
-
-        <section class="cr-panel">
-
-            <div class="cr-panel-head">
-
-                <h3>Available Courses</h3>
-
-                <span>
-                    <?= count($availableCourses) ?> course offering(s)
-                </span>
-
-            </div>
-
-            <?php if (!$currentSemester): ?>
-
-            <div class="cr-empty">
-                Course registration is unavailable because no active semester exists.
-            </div>
-
-            <?php elseif (!$availableCourses): ?>
-
-            <div class="cr-empty">
-                No course offerings have been published for this semester yet.
+            <div class="empty-state">
+                <strong>No Course Offerings Available</strong>
+                No courses have been assigned to the current semester yet.
             </div>
 
             <?php else: ?>
 
-            <div class="cr-table-wrap">
+            <div class="table-wrap">
 
-                <table class="cr-table">
+                <table>
 
                     <thead>
-
                         <tr>
                             <th>Course</th>
                             <th>Credit</th>
-                            <th>Teacher</th>
+                            <th>Assigned Teacher</th>
                             <th>Class Schedule</th>
-                            <th>Room</th>
-                            <th>Seats</th>
-                            <th>Status</th>
+                            <th>Available Seats</th>
+                            <th>Registration</th>
                             <th>Action</th>
                         </tr>
-
                     </thead>
 
                     <tbody>
 
-                        <?php foreach ($availableCourses as $course): ?>
+                        <?php foreach ($offerings as $offering): ?>
 
                         <?php
+                        $offeringId = (int)$offering['offering_id'];
 
-                        $capacity = (int)$course['capacity'];
-                        $registered = (int)$course['registered_count'];
+                        $capacity = (int)$offering['capacity'];
+                        $registeredCount = (int)$offering['registered_count'];
 
-                        $isFull = $capacity > 0 && $registered >= $capacity;
-                        $isRegistered = (int)$course['already_registered'] > 0;
+                        $availableSeats = max(0, $capacity - $registeredCount);
 
-                        $isCourseOpen =
+                        $isFull = ($capacity > 0 && $availableSeats <= 0);
+
+                        $isCourseOpen = (
                             $semesterRegistrationOpen &&
-                            (int)$course['registration_open'] === 1 &&
-                            !$isFull;
+                            (int)$offering['registration_open'] === 1 &&
+                            !$isFull
+                        );
 
+                        $isAlreadyRegistered = false;
+
+                        foreach ($myRegistrations as $myRegistration) {
+                            if (
+                                (int)$myRegistration['offering_id'] === $offeringId &&
+                                $myRegistration['status'] === 'registered'
+                            ) {
+                                $isAlreadyRegistered = true;
+                                break;
+                            }
+                        }
+
+                        $schedule = 'Not scheduled';
+
+                        if (!empty($offering['class_day'])) {
+
+                            $schedule = $offering['class_day'];
+
+                            $startTime = registration_time($offering['start_time'] ?? '');
+                            $endTime = registration_time($offering['end_time'] ?? '');
+
+                            if ($startTime && $endTime) {
+                                $schedule .= '<br>' . registration_escape($startTime . ' - ' . $endTime);
+                            }
+
+                            if (!empty($offering['room'])) {
+                                $schedule .= '<br>Room: ' . registration_escape($offering['room']);
+                            }
+                        }
                         ?>
 
                         <tr>
 
                             <td>
+                                <div class="course-title">
+                                    <?= registration_escape($offering['course_title']) ?>
+                                </div>
 
-                                <strong>
-                                    <?= registration_escape($course['course_code']) ?>
-                                </strong>
-
-                                <?= registration_escape($course['course_title']) ?>
-
+                                <div class="course-code">
+                                    <?= registration_escape($offering['course_code']) ?>
+                                </div>
                             </td>
 
                             <td>
-                                <?= registration_escape($course['credit_hours']) ?>
+                                <?= number_format((float)$offering['credit_hours'], 1) ?>
                             </td>
 
                             <td>
-                                <?= registration_escape($course['teacher_name'] ?? 'Not assigned') ?>
+                                <?= registration_escape($offering['teacher_name'] ?: 'Not assigned') ?>
                             </td>
 
                             <td>
-
-                                <?php if (!empty($course['class_day'])): ?>
-
-                                <?= registration_escape($course['class_day']) ?>
-
-                                <br>
-
-                                <span class="cr-muted">
-
-                                    <?= registration_escape(
-                                            registration_time($course['start_time'])
-                                        ) ?>
-
-                                    –
-
-                                    <?= registration_escape(
-                                            registration_time($course['end_time'])
-                                        ) ?>
-
-                                </span>
-
-                                <?php else: ?>
-
-                                Not scheduled
-
-                                <?php endif; ?>
-
+                                <?= $schedule ?>
                             </td>
 
                             <td>
-                                <?= registration_escape($course['room'] ?? '—') ?>
+                                <div class="seat-info">
+                                    <strong><?= $availableSeats ?></strong>
+                                    / <?= $capacity ?>
+                                    <br>
+                                    <small>Available</small>
+                                </div>
                             </td>
 
                             <td>
 
-                                <?= $registered ?>
+                                <?php if ($isAlreadyRegistered): ?>
 
-                                /
-
-                                <?= $capacity > 0 ? $capacity : 'Unlimited' ?>
-
-                            </td>
-
-                            <td>
-
-                                <?php if ($isRegistered): ?>
-
-                                <span class="cr-status registered">
+                                <span class="badge open">
                                     Registered
                                 </span>
 
                                 <?php elseif ($isFull): ?>
 
-                                <span class="cr-status full">
-                                    Full
+                                <span class="badge full">
+                                    Course Full
                                 </span>
 
-                                <?php elseif (!$semesterRegistrationOpen || (int)$course['registration_open'] !== 1): ?>
+                                <?php elseif (!$semesterRegistrationOpen): ?>
 
-                                <span class="cr-status closed">
-                                    Closed
+                                <span class="badge closed">
+                                    Semester Closed
+                                </span>
+
+                                <?php elseif ((int)$offering['registration_open'] !== 1): ?>
+
+                                <span class="badge closed">
+                                    Course Closed
                                 </span>
 
                                 <?php else: ?>
 
-                                <span class="cr-status open">
+                                <span class="badge open">
                                     Open
                                 </span>
 
@@ -1189,23 +1086,23 @@ $logoutLink = BASE_URL . '/auth/logout.php';
 
                             <td>
 
-                                <?php if ($isRegistered): ?>
+                                <?php if ($isAlreadyRegistered): ?>
 
-                                <button class="cr-register-btn" disabled>
+                                <button class="register-button" disabled>
                                     Registered
                                 </button>
 
                                 <?php elseif ($isCourseOpen): ?>
 
-                                <form method="POST" class="cr-register-form"
+                                <form method="POST" class="register-form"
                                     onsubmit="return confirm('Are you sure you want to register for this course?');">
 
                                     <input type="hidden" name="csrf_token"
                                         value="<?= registration_escape($csrfToken) ?>">
 
-                                    <input type="hidden" name="offering_id" value="<?= (int)$course['offering_id'] ?>">
+                                    <input type="hidden" name="offering_id" value="<?= $offeringId ?>">
 
-                                    <button type="submit" class="cr-register-btn">
+                                    <button type="submit" name="register_course" class="register-button">
                                         Register
                                     </button>
 
@@ -1213,7 +1110,7 @@ $logoutLink = BASE_URL . '/auth/logout.php';
 
                                 <?php else: ?>
 
-                                <button class="cr-register-btn" disabled>
+                                <button class="register-button" disabled>
                                     Unavailable
                                 </button>
 
@@ -1233,118 +1130,101 @@ $logoutLink = BASE_URL . '/auth/logout.php';
 
             <?php endif; ?>
 
-            <p class="cr-note">
-                Please review the course details, teacher, class schedule and room before registration.
-                You cannot register for the same course offering twice. Registration is subject to
-                available seats and the semester registration period.
-            </p>
-
         </section>
 
-        <!-- My Registered Courses -->
 
-        <section class="cr-panel">
+        <!-- MY REGISTERED COURSES -->
 
-            <div class="cr-panel-head">
+        <section class="content-card">
 
-                <h3>My Registered Courses</h3>
-
-                <span>
-                    <?= (int)$myCourseCount ?> registered course(s)
-                </span>
-
+            <div class="section-heading">
+                <h2>My Course Registrations</h2>
             </div>
 
-            <?php if ($myCourses): ?>
+            <?php if (empty($myRegistrations)): ?>
 
-            <div class="cr-table-wrap">
+            <div class="empty-state">
+                <strong>No Course Registrations Yet</strong>
+                Your registered courses will appear here.
+            </div>
 
-                <table class="cr-table">
+            <?php else: ?>
+
+            <div class="table-wrap">
+
+                <table>
 
                     <thead>
-
                         <tr>
-                            <th>Course</th>
-                            <th>Credit</th>
+                            <th>Course Code</th>
+                            <th>Course Title</th>
+                            <th>Credit Hours</th>
                             <th>Teacher</th>
-                            <th>Schedule</th>
-                            <th>Room</th>
                             <th>Registration Date</th>
                             <th>Status</th>
                         </tr>
-
                     </thead>
 
                     <tbody>
 
-                        <?php foreach ($myCourses as $course): ?>
+                        <?php foreach ($myRegistrations as $registration): ?>
 
                         <tr>
 
                             <td>
-
                                 <strong>
-                                    <?= registration_escape($course['course_code']) ?>
+                                    <?= registration_escape($registration['course_code']) ?>
                                 </strong>
-
-                                <?= registration_escape($course['course_title']) ?>
-
                             </td>
 
                             <td>
-                                <?= registration_escape($course['credit_hours']) ?>
+                                <?= registration_escape($registration['course_title']) ?>
                             </td>
 
                             <td>
-                                <?= registration_escape($course['teacher_name'] ?? 'Not assigned') ?>
+                                <?= number_format((float)$registration['credit_hours'], 1) ?>
                             </td>
 
                             <td>
-
-                                <?php if (!empty($course['class_day'])): ?>
-
-                                <?= registration_escape($course['class_day']) ?>
-
-                                <br>
-
-                                <span class="cr-muted">
-
-                                    <?= registration_escape(
-                                            registration_time($course['start_time'])
-                                        ) ?>
-
-                                    –
-
-                                    <?= registration_escape(
-                                            registration_time($course['end_time'])
-                                        ) ?>
-
-                                </span>
-
-                                <?php else: ?>
-
-                                Not scheduled
-
-                                <?php endif; ?>
-
-                            </td>
-
-                            <td>
-                                <?= registration_escape($course['room'] ?? '—') ?>
+                                <?= registration_escape($registration['teacher_name'] ?: 'Not assigned') ?>
                             </td>
 
                             <td>
                                 <?= registration_escape(
-                                    $course['registered_at']
-                                        ? date('d M Y', strtotime($course['registered_at']))
-                                        : '—'
+                                    !empty($registration['registered_at'])
+                                        ? date('d M Y', strtotime($registration['registered_at']))
+                                        : 'Not available'
                                 ) ?>
                             </td>
 
                             <td>
-                                <span class="cr-status registered">
-                                    <?= registration_escape($course['status']) ?>
+
+                                <?php if ($registration['status'] === 'registered'): ?>
+
+                                <span class="badge open">
+                                    Registered
                                 </span>
+
+                                <?php elseif ($registration['status'] === 'dropped'): ?>
+
+                                <span class="badge closed">
+                                    Dropped
+                                </span>
+
+                                <?php elseif ($registration['status'] === 'completed'): ?>
+
+                                <span class="badge open">
+                                    Completed
+                                </span>
+
+                                <?php else: ?>
+
+                                <span class="badge closed">
+                                    <?= registration_escape(ucfirst($registration['status'])) ?>
+                                </span>
+
+                                <?php endif; ?>
+
                             </td>
 
                         </tr>
@@ -1357,18 +1237,17 @@ $logoutLink = BASE_URL . '/auth/logout.php';
 
             </div>
 
-            <?php else: ?>
-
-            <div class="cr-empty">
-                You have not registered for any courses in the current semester yet.
-            </div>
-
             <?php endif; ?>
 
         </section>
 
-        <footer class="cr-footer">
-            DU EMBA MIS Student Portal · Department of Management Information Systems
+
+        <footer class="footer">
+
+            DU EMBA MIS Student Portal
+            <br>
+            Department of Management Information Systems, University of Dhaka
+
         </footer>
 
     </div>

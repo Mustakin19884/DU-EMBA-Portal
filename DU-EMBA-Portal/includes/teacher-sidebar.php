@@ -7,6 +7,7 @@ $teacherMenu = [
     ['label' => 'Attendance', 'file' => 'attendance.php', 'icon' => '▣'],
     ['label' => 'Assessments', 'file' => 'assessments.php', 'icon' => '▤'],
     ['label' => 'Marks Entry', 'file' => 'marks.php', 'icon' => '✎'],
+    ['label' => 'Result Calculation', 'file' => 'results.php', 'icon' => '▤'],
 ];
 ?>
 <aside class="admin-sidebar" id="teacherSidebar">
