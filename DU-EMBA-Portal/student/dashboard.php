@@ -1502,6 +1502,10 @@ if ($invoiceSummary['total_amount'] > 0) {
                             Payment History
                         </a>
 
+                        <a class="quick-link" href="<?= BASE_URL ?>/student/payments.php">
+                            My Payments & Invoices
+                        </a>
+
                         <a class="quick-link" href="<?= BASE_URL ?>/auth/logout.php">
                             Logout
                         </a>
