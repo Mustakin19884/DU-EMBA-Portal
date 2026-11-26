@@ -1491,7 +1491,9 @@ if ($invoiceSummary['total_amount'] > 0) {
                         <a class="quick-link" href="#my-courses">
                             My Courses
                         </a>
-
+                        <a class="quick-link" href="<?= BASE_URL ?>/student/attendance.php">
+                            My Attendance
+                        </a>
                         <a class="quick-link" href="#academic-results">
                             Academic Results
                         </a>

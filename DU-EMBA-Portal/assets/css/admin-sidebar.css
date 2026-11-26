@@ -16,4 +16,65 @@
 .admin-mobile-bar{display:none;background:#102d50;color:#fff;padding:13px 18px;align-items:center;gap:12px}
 .admin-sidebar-toggle{border:1px solid rgba(255,255,255,.35);background:transparent;color:#fff;border-radius:7px;padding:7px 11px;font-size:18px;cursor:pointer}
 .admin-sidebar-backdrop{display:none}
+
+
+/* Admin content layout and page consistency */
+.admin-layout {
+    display: flex;
+    min-height: 100vh;
+    width: 100%;
+    background: var(--beige, #f4efe5);
+}
+
+.admin-content {
+    flex: 1;
+    min-width: 0;
+    padding: 28px 32px;
+    box-sizing: border-box;
+}
+
+.admin-content > * {
+    max-width: 1450px;
+}
+
+.admin-content h1,
+.admin-content h2,
+.admin-content h3 {
+    color: var(--navy, #102d50);
+}
+
+.admin-content .content-card,
+.admin-content .admin-card,
+.admin-content .form-card {
+    box-sizing: border-box;
+}
+
+.admin-content table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.admin-content .table-wrapper,
+.admin-content .table-responsive {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.admin-mobile-bar {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+@media (max-width: 900px) {
+    .admin-content {
+        padding: 20px 16px;
+    }
+}
+
+@media (max-width: 600px) {
+    .admin-content {
+        padding: 16px 12px;
+    }
+}
+
 @media(max-width:900px){.admin-sidebar{position:fixed;left:-270px;top:0;transition:left .22s ease;box-shadow:8px 0 30px rgba(0,0,0,.15)}.admin-sidebar.open{left:0}.admin-mobile-bar{display:flex}.admin-sidebar-backdrop.show{display:block;position:fixed;inset:0;background:rgba(8,20,35,.45);z-index:90}.admin-content{width:100%}}
