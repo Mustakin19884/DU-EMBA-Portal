@@ -1491,7 +1491,14 @@ if ($invoiceSummary['total_amount'] > 0) {
                         <a class="quick-link" href="<?= BASE_URL ?>/student/registered-courses.php">
                             My Registered Courses
                         </a>
+                        <!-- PREREQUISITE WAIVER APPLICATION -->
+                        <a class="quick-link" href="<?= BASE_URL ?>/student/waiver-application.php">
+                            Waiver Application
+                        </a>
 
+                        <a class="quick-link" href="<?= BASE_URL ?>/student/credit-tracker.php">
+                            Credit Tracker & Degree Progress
+                        </a>
                         <a class="quick-link" href="#my-courses">My Courses</a>
 
                         <a class="quick-link" href="<?= BASE_URL ?>/student/attendance.php">
