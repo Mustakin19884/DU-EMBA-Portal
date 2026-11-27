@@ -1,17 +1,18 @@
 <?php
+declare(strict_types=1);
+
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/functions.php';
 
 require_role('admin');
 
-// Escape output
 if (!function_exists('course_h')) {
-    function course_h($value) {
+    function course_h($value): string
+    {
         return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
     }
 }
 
-// CSRF token
 if (empty($_SESSION['course_csrf'])) {
     $_SESSION['course_csrf'] = bin2hex(random_bytes(32));
 }
@@ -22,14 +23,67 @@ $error = '';
 
 /*
 |--------------------------------------------------------------------------
+| HELPER FUNCTIONS
+|--------------------------------------------------------------------------
+*/
+
+function course_redirect(string $success): void
+{
+    header('Location: courses.php?success=' . urlencode($success));
+    exit;
+}
+
+function validate_active_category(mysqli $conn, int $categoryId): void
+{
+    $stmt = $conn->prepare(
+        "SELECT id FROM course_categories
+         WHERE id = ? AND is_active = 1"
+    );
+    $stmt->bind_param("i", $categoryId);
+    $stmt->execute();
+
+    if (!$stmt->get_result()->fetch_assoc()) {
+        throw new Exception('Please select a valid active course category.');
+    }
+}
+
+function validate_active_teacher(mysqli $conn, ?int $teacherId): void
+{
+    if ($teacherId === null) {
+        return;
+    }
+
+    $stmt = $conn->prepare(
+        "SELECT t.id
+         FROM teachers t
+         INNER JOIN users u ON u.id = t.user_id
+         WHERE t.id = ?
+           AND u.role = 'teacher'
+           AND u.is_active = 1"
+    );
+
+    $stmt->bind_param("i", $teacherId);
+    $stmt->execute();
+
+    if (!$stmt->get_result()->fetch_assoc()) {
+        throw new Exception('Selected teacher is not active or does not exist.');
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
 | POST ACTIONS
 |--------------------------------------------------------------------------
 */
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    if (!isset($_POST['csrf_token']) ||
-        !hash_equals($csrf, $_POST['csrf_token'])) {
+    $postedToken = $_POST['csrf_token'] ?? '';
+
+    if (
+        !is_string($postedToken) ||
+        !hash_equals($csrf, $postedToken)
+    ) {
         $error = 'Invalid request. Please refresh the page and try again.';
     } else {
 
@@ -38,34 +92,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
 
             /*
-            | Add Course
+            |--------------------------------------------------------------------------
+            | ADD COURSE
+            |--------------------------------------------------------------------------
             */
+
             if ($action === 'add_course') {
 
-                $category_id = (int)($_POST['category_id'] ?? 0);
-                $course_code = strtoupper(trim($_POST['course_code'] ?? ''));
-                $course_title = trim($_POST['course_title'] ?? '');
-                $credit_hours = (float)($_POST['credit_hours'] ?? 3);
+                $categoryId = (int)($_POST['category_id'] ?? 0);
+                $courseCode = strtoupper(trim($_POST['course_code'] ?? ''));
+                $courseTitle = trim($_POST['course_title'] ?? '');
+                $creditHours = (float)($_POST['credit_hours'] ?? 3);
                 $description = trim($_POST['description'] ?? '');
 
-                if (!$category_id || !$course_code || !$course_title) {
-                    throw new Exception('Category, course code and title are required.');
+                if (
+                    $categoryId <= 0 ||
+                    $courseCode === '' ||
+                    $courseTitle === ''
+                ) {
+                    throw new Exception(
+                        'Category, course code and course title are required.'
+                    );
                 }
 
-                if ($credit_hours <= 0 || $credit_hours > 99.9) {
+                if (strlen($courseCode) > 30 || strlen($courseTitle) > 180) {
+                    throw new Exception('Course code or title is too long.');
+                }
+
+                if ($creditHours <= 0 || $creditHours > 99.9) {
                     throw new Exception('Enter a valid credit hour value.');
                 }
 
-                $check = $conn->prepare(
-                    "SELECT id FROM course_categories
-                     WHERE id = ? AND is_active = 1"
-                );
-                $check->bind_param("i", $category_id);
-                $check->execute();
-
-                if (!$check->get_result()->fetch_assoc()) {
-                    throw new Exception('Please select a valid active category.');
-                }
+                validate_active_category($conn, $categoryId);
 
                 $stmt = $conn->prepare(
                     "INSERT INTO courses
@@ -75,68 +133,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $stmt->bind_param(
                     "ssids",
-                    $course_code,
-                    $course_title,
-                    $category_id,
-                    $credit_hours,
+                    $courseCode,
+                    $courseTitle,
+                    $categoryId,
+                    $creditHours,
                     $description
                 );
 
                 $stmt->execute();
 
-                header('Location: courses.php?success=course_added');
-                exit;
+                course_redirect('course_added');
             }
 
             /*
-            | Edit Course
+            |--------------------------------------------------------------------------
+            | EDIT COURSE
+            |--------------------------------------------------------------------------
             */
-            if ($action === 'edit_course') {
 
-                $course_id = (int)($_POST['course_id'] ?? 0);
-                $category_id = (int)($_POST['category_id'] ?? 0);
-                $course_code = strtoupper(trim($_POST['course_code'] ?? ''));
-                $course_title = trim($_POST['course_title'] ?? '');
-                $credit_hours = (float)($_POST['credit_hours'] ?? 3);
+            elseif ($action === 'edit_course') {
+
+                $courseId = (int)($_POST['course_id'] ?? 0);
+                $categoryId = (int)($_POST['category_id'] ?? 0);
+                $courseCode = strtoupper(trim($_POST['course_code'] ?? ''));
+                $courseTitle = trim($_POST['course_title'] ?? '');
+                $creditHours = (float)($_POST['credit_hours'] ?? 3);
                 $description = trim($_POST['description'] ?? '');
 
-                if (!$course_id || !$category_id || !$course_code || !$course_title) {
+                if (
+                    $courseId <= 0 ||
+                    $categoryId <= 0 ||
+                    $courseCode === '' ||
+                    $courseTitle === ''
+                ) {
                     throw new Exception('Please fill in all required course fields.');
                 }
 
-                if ($credit_hours <= 0 || $credit_hours > 99.9) {
+                if (strlen($courseCode) > 30 || strlen($courseTitle) > 180) {
+                    throw new Exception('Course code or title is too long.');
+                }
+
+                if ($creditHours <= 0 || $creditHours > 99.9) {
                     throw new Exception('Enter a valid credit hour value.');
+                }
+
+                validate_active_category($conn, $categoryId);
+
+                $check = $conn->prepare(
+                    "SELECT id FROM courses WHERE id = ?"
+                );
+                $check->bind_param("i", $courseId);
+                $check->execute();
+
+                if (!$check->get_result()->fetch_assoc()) {
+                    throw new Exception('Course not found.');
                 }
 
                 $stmt = $conn->prepare(
                     "UPDATE courses
-                     SET course_code = ?, course_title = ?,
-                         category_id = ?, credit_hours = ?, description = ?
+                     SET course_code = ?,
+                         course_title = ?,
+                         category_id = ?,
+                         credit_hours = ?,
+                         description = ?
                      WHERE id = ?"
                 );
 
                 $stmt->bind_param(
                     "ssidsi",
-                    $course_code,
-                    $course_title,
-                    $category_id,
-                    $credit_hours,
+                    $courseCode,
+                    $courseTitle,
+                    $categoryId,
+                    $creditHours,
                     $description,
-                    $course_id
+                    $courseId
                 );
 
                 $stmt->execute();
 
-                header('Location: courses.php?success=course_updated');
-                exit;
+                course_redirect('course_updated');
             }
 
             /*
-            | Activate / Deactivate Course
+            |--------------------------------------------------------------------------
+            | ACTIVATE / DEACTIVATE COURSE
+            |--------------------------------------------------------------------------
             */
-            if ($action === 'toggle_course') {
 
-                $course_id = (int)($_POST['course_id'] ?? 0);
+            elseif ($action === 'toggle_course') {
+
+                $courseId = (int)($_POST['course_id'] ?? 0);
+
+                if ($courseId <= 0) {
+                    throw new Exception('Invalid course selected.');
+                }
 
                 $stmt = $conn->prepare(
                     "UPDATE courses
@@ -144,59 +234,88 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                      WHERE id = ?"
                 );
 
-                $stmt->bind_param("i", $course_id);
+                $stmt->bind_param("i", $courseId);
                 $stmt->execute();
 
-                header('Location: courses.php?success=course_status');
-                exit;
+                if ($stmt->affected_rows === 0) {
+                    $check = $conn->prepare(
+                        "SELECT id FROM courses WHERE id = ?"
+                    );
+                    $check->bind_param("i", $courseId);
+                    $check->execute();
+
+                    if (!$check->get_result()->fetch_assoc()) {
+                        throw new Exception('Course not found.');
+                    }
+                }
+
+                course_redirect('course_status');
             }
 
             /*
-            | Create Semester-wise Course Offering
+            |--------------------------------------------------------------------------
+            | CREATE SEMESTER-WISE COURSE OFFERING
+            |--------------------------------------------------------------------------
             */
-            if ($action === 'add_offering') {
 
-                $course_id = (int)($_POST['course_id'] ?? 0);
-                $semester_id = (int)($_POST['semester_id'] ?? 0);
-                $teacher_id = !empty($_POST['teacher_id'])
-                    ? (int)$_POST['teacher_id'] : null;
+            elseif ($action === 'add_offering') {
+
+                $courseId = (int)($_POST['course_id'] ?? 0);
+                $semesterId = (int)($_POST['semester_id'] ?? 0);
+
+                $teacherId = !empty($_POST['teacher_id'])
+                    ? (int)$_POST['teacher_id']
+                    : null;
+
                 $capacity = (int)($_POST['capacity'] ?? 60);
-                $registration_open = isset($_POST['registration_open']) ? 1 : 0;
+                $registrationOpen = isset($_POST['registration_open']) ? 1 : 0;
 
-                if (!$course_id || !$semester_id) {
+                if ($courseId <= 0 || $semesterId <= 0) {
                     throw new Exception('Please select a course and semester.');
                 }
 
                 if ($capacity < 1) {
-                    throw new Exception('Capacity must be at least 1.');
+                    throw new Exception('Student capacity must be at least 1.');
                 }
 
+                // Check active course
+                $check = $conn->prepare(
+                    "SELECT id FROM courses
+                     WHERE id = ? AND is_active = 1"
+                );
+                $check->bind_param("i", $courseId);
+                $check->execute();
+
+                if (!$check->get_result()->fetch_assoc()) {
+                    throw new Exception('Selected course is not active.');
+                }
+
+                // Check semester
+                $check = $conn->prepare(
+                    "SELECT id FROM semesters WHERE id = ?"
+                );
+                $check->bind_param("i", $semesterId);
+                $check->execute();
+
+                if (!$check->get_result()->fetch_assoc()) {
+                    throw new Exception('Selected semester does not exist.');
+                }
+
+                // Check duplicate offering
                 $check = $conn->prepare(
                     "SELECT id FROM course_offerings
                      WHERE course_id = ? AND semester_id = ?"
                 );
-                $check->bind_param("ii", $course_id, $semester_id);
+                $check->bind_param("ii", $courseId, $semesterId);
                 $check->execute();
 
                 if ($check->get_result()->fetch_assoc()) {
-                    throw new Exception('This course is already offered in the selected semester.');
-                }
-
-                if ($teacher_id !== null) {
-                    $check = $conn->prepare(
-                        "SELECT t.id
-                         FROM teachers t
-                         JOIN users u ON u.id = t.user_id
-                         WHERE t.id = ? AND u.role = 'teacher'
-                         AND u.is_active = 1"
+                    throw new Exception(
+                        'This course is already offered in the selected semester.'
                     );
-                    $check->bind_param("i", $teacher_id);
-                    $check->execute();
-
-                    if (!$check->get_result()->fetch_assoc()) {
-                        throw new Exception('Selected teacher is not active.');
-                    }
                 }
+
+                validate_active_teacher($conn, $teacherId);
 
                 $stmt = $conn->prepare(
                     "INSERT INTO course_offerings
@@ -206,77 +325,87 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $stmt->bind_param(
                     "iiiii",
-                    $course_id,
-                    $semester_id,
-                    $teacher_id,
+                    $courseId,
+                    $semesterId,
+                    $teacherId,
                     $capacity,
-                    $registration_open
+                    $registrationOpen
                 );
 
                 $stmt->execute();
 
-                header('Location: courses.php?success=offering_added');
-                exit;
+                course_redirect('offering_added');
             }
 
             /*
-            | Update Offering: Teacher, Capacity, Registration
+            |--------------------------------------------------------------------------
+            | UPDATE COURSE OFFERING
+            |--------------------------------------------------------------------------
             */
-            if ($action === 'update_offering') {
 
-                $offering_id = (int)($_POST['offering_id'] ?? 0);
-                $teacher_id = !empty($_POST['teacher_id'])
-                    ? (int)$_POST['teacher_id'] : null;
+            elseif ($action === 'update_offering') {
+
+                $offeringId = (int)($_POST['offering_id'] ?? 0);
+
+                $teacherId = !empty($_POST['teacher_id'])
+                    ? (int)$_POST['teacher_id']
+                    : null;
+
                 $capacity = (int)($_POST['capacity'] ?? 60);
-                $registration_open = isset($_POST['registration_open']) ? 1 : 0;
+                $registrationOpen = isset($_POST['registration_open']) ? 1 : 0;
 
-                if (!$offering_id || $capacity < 1) {
+                if ($offeringId <= 0 || $capacity < 1) {
                     throw new Exception('Please provide valid offering information.');
                 }
 
-                if ($teacher_id !== null) {
-                    $check = $conn->prepare(
-                        "SELECT t.id
-                         FROM teachers t
-                         JOIN users u ON u.id = t.user_id
-                         WHERE t.id = ? AND u.role = 'teacher'
-                         AND u.is_active = 1"
-                    );
-                    $check->bind_param("i", $teacher_id);
-                    $check->execute();
+                $check = $conn->prepare(
+                    "SELECT id FROM course_offerings WHERE id = ?"
+                );
+                $check->bind_param("i", $offeringId);
+                $check->execute();
 
-                    if (!$check->get_result()->fetch_assoc()) {
-                        throw new Exception('Selected teacher is not active.');
-                    }
+                if (!$check->get_result()->fetch_assoc()) {
+                    throw new Exception('Course offering not found.');
                 }
+
+                validate_active_teacher($conn, $teacherId);
 
                 $stmt = $conn->prepare(
                     "UPDATE course_offerings
-                     SET teacher_id = ?, capacity = ?, registration_open = ?
+                     SET teacher_id = ?,
+                         capacity = ?,
+                         registration_open = ?
                      WHERE id = ?"
                 );
 
                 $stmt->bind_param(
                     "iiii",
-                    $teacher_id,
+                    $teacherId,
                     $capacity,
-                    $registration_open,
-                    $offering_id
+                    $registrationOpen,
+                    $offeringId
                 );
 
                 $stmt->execute();
 
-                header('Location: courses.php?success=offering_updated');
-                exit;
+                course_redirect('offering_updated');
+            }
+
+            else {
+                throw new Exception('Invalid action.');
             }
 
         } catch (mysqli_sql_exception $ex) {
+
             if ((int)$ex->getCode() === 1062) {
-                $error = 'This course code already exists.';
+                $error = 'This course code or offering already exists.';
             } else {
-                $error = 'Database error: ' . $ex->getMessage();
+                error_log('Course Management SQL Error: ' . $ex->getMessage());
+                $error = 'A database error occurred. Please check the submitted information.';
             }
-        } catch (Exception $ex) {
+
+        } catch (Throwable $ex) {
+
             $error = $ex->getMessage();
         }
     }
@@ -309,15 +438,19 @@ if (isset($_GET['success'])) {
 $editCourse = null;
 
 if (isset($_GET['edit'])) {
-    $edit_id = (int)$_GET['edit'];
 
-    $stmt = $conn->prepare(
-        "SELECT * FROM courses WHERE id = ?"
-    );
-    $stmt->bind_param("i", $edit_id);
-    $stmt->execute();
+    $editId = (int)$_GET['edit'];
 
-    $editCourse = $stmt->get_result()->fetch_assoc();
+    if ($editId > 0) {
+        $stmt = $conn->prepare(
+            "SELECT * FROM courses WHERE id = ?"
+        );
+
+        $stmt->bind_param("i", $editId);
+        $stmt->execute();
+
+        $editCourse = $stmt->get_result()->fetch_assoc();
+    }
 }
 
 /*
@@ -326,12 +459,12 @@ if (isset($_GET['edit'])) {
 |--------------------------------------------------------------------------
 */
 
-// Active categories
+// Load all categories so existing inactive categories remain visible
+// when editing old courses. Only active categories can be newly assigned.
 $categories = $conn->query(
-    "SELECT id, category_name
+    "SELECT id, category_name, is_active
      FROM course_categories
-     WHERE is_active = 1
-     ORDER BY id ASC"
+     ORDER BY category_name ASC"
 )->fetch_all(MYSQLI_ASSOC);
 
 // Active courses
@@ -353,14 +486,15 @@ $semesters = $conn->query(
 $teachers = $conn->query(
     "SELECT t.id, t.employee_id, t.designation, u.full_name
      FROM teachers t
-     JOIN users u ON u.id = t.user_id
-     WHERE u.role = 'teacher' AND u.is_active = 1
+     INNER JOIN users u ON u.id = t.user_id
+     WHERE u.role = 'teacher'
+       AND u.is_active = 1
      ORDER BY u.full_name ASC"
 )->fetch_all(MYSQLI_ASSOC);
 
 /*
 |--------------------------------------------------------------------------
-| COURSE LIST
+| COURSE LIST / SEARCH / FILTER
 |--------------------------------------------------------------------------
 */
 
@@ -368,18 +502,26 @@ $search = trim($_GET['search'] ?? '');
 $categoryFilter = (int)($_GET['category'] ?? 0);
 
 $sql = "
-    SELECT c.*, cc.category_name
+    SELECT
+        c.*,
+        cc.category_name
     FROM courses c
-    LEFT JOIN course_categories cc ON cc.id = c.category_id
-    WHERE 1=1
+    LEFT JOIN course_categories cc
+        ON cc.id = c.category_id
+    WHERE 1 = 1
 ";
 
 $params = [];
 $types = '';
 
 if ($search !== '') {
-    $sql .= " AND (c.course_code LIKE ? OR c.course_title LIKE ?)";
-    $like = "%{$search}%";
+    $sql .= " AND (
+        c.course_code LIKE ?
+        OR c.course_title LIKE ?
+    )";
+
+    $like = '%' . $search . '%';
+
     $params[] = $like;
     $params[] = $like;
     $types .= 'ss';
@@ -391,7 +533,7 @@ if ($categoryFilter > 0) {
     $types .= 'i';
 }
 
-$sql .= " ORDER BY cc.id ASC, c.course_code ASC";
+$sql .= " ORDER BY cc.category_name ASC, c.course_code ASC";
 
 $stmt = $conn->prepare($sql);
 
@@ -400,6 +542,7 @@ if (!empty($params)) {
 }
 
 $stmt->execute();
+
 $courses = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
 /*
@@ -420,12 +563,24 @@ $offerings = $conn->query(
         t.employee_id,
         u.full_name AS teacher_name
      FROM course_offerings co
-     JOIN courses c ON c.id = co.course_id
-     JOIN semesters s ON s.id = co.semester_id
-     LEFT JOIN teachers t ON t.id = co.teacher_id
-     LEFT JOIN users u ON u.id = t.user_id
+     INNER JOIN courses c
+        ON c.id = co.course_id
+     INNER JOIN semesters s
+        ON s.id = co.semester_id
+     LEFT JOIN teachers t
+        ON t.id = co.teacher_id
+     LEFT JOIN users u
+        ON u.id = t.user_id
      ORDER BY s.start_date DESC, c.course_code ASC"
 )->fetch_all(MYSQLI_ASSOC);
+
+/*
+|--------------------------------------------------------------------------
+| PAGE HEADER
+|--------------------------------------------------------------------------
+*/
+
+$page_title = 'Course Management';
 
 require_once __DIR__ . '/../includes/admin-header.php';
 ?>
@@ -435,6 +590,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
     max-width: 1500px;
     margin: 25px auto;
     padding: 0 24px 40px;
+    box-sizing: border-box;
 }
 
 .course-heading {
@@ -458,6 +614,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
     padding: 24px;
     margin-bottom: 24px;
     box-shadow: 0 3px 12px rgba(16, 45, 80, .04);
+    box-sizing: border-box;
 }
 
 .course-panel h2 {
@@ -489,6 +646,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
     font: inherit;
     background: #fff;
     color: var(--text, #263548);
+    box-sizing: border-box;
 }
 
 .course-field textarea {
@@ -510,6 +668,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
     text-decoration: none;
     cursor: pointer;
     font-weight: 600;
+    font-size: 14px;
 }
 
 .course-btn:hover {
@@ -547,6 +706,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
 }
 
 .course-table-wrap {
+    width: 100%;
     overflow-x: auto;
 }
 
@@ -578,6 +738,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
     display: flex;
     gap: 7px;
     flex-wrap: wrap;
+    align-items: center;
 }
 
 .course-inline-form {
@@ -606,6 +767,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
     padding: 10px;
     border: 1px solid var(--border, #e1e5eb);
     border-radius: 7px;
+    font: inherit;
 }
 
 .course-status {
@@ -624,6 +786,17 @@ require_once __DIR__ . '/../includes/admin-header.php';
 .course-status.inactive {
     background: #fceaea;
     color: #a12b2b;
+}
+
+.course-checkbox {
+    display: flex !important;
+    align-items: center;
+    gap: 9px;
+    cursor: pointer;
+}
+
+.course-checkbox input {
+    width: auto !important;
 }
 
 @media (max-width: 700px) {
@@ -667,9 +840,11 @@ require_once __DIR__ . '/../includes/admin-header.php';
     <!-- ADD / EDIT COURSE -->
 
     <section class="course-panel" id="course-form">
+
         <h2><?= $editCourse ? 'Edit Course' : 'Add New Course' ?></h2>
 
         <form method="POST">
+
             <input type="hidden" name="csrf_token" value="<?= course_h($csrf) ?>">
 
             <input type="hidden" name="action" value="<?= $editCourse ? 'edit_course' : 'add_course' ?>">
@@ -682,46 +857,59 @@ require_once __DIR__ . '/../includes/admin-header.php';
 
                 <div class="course-field">
                     <label>Course Category *</label>
+
                     <select name="category_id" required>
                         <option value="">Select Category</option>
 
                         <?php foreach ($categories as $category): ?>
-                        <option value="<?= (int)$category['id'] ?>" <?= ($editCourse &&
-                                    (int)$editCourse['category_id'] === (int)$category['id'])
-                                    ? 'selected' : '' ?>>
+                        <option value="<?= (int)$category['id'] ?>" <?= (
+                                    $editCourse &&
+                                    (int)$editCourse['category_id'] === (int)$category['id']
+                                ) ? 'selected' : '' ?> <?= (
+                                    !(int)$category['is_active'] &&
+                                    (!$editCourse ||
+                                    (int)$editCourse['category_id'] !== (int)$category['id'])
+                                ) ? 'disabled' : '' ?>>
                             <?= course_h($category['category_name']) ?>
+                            <?= !(int)$category['is_active'] ? ' (Inactive)' : '' ?>
                         </option>
                         <?php endforeach; ?>
+
                     </select>
                 </div>
 
                 <div class="course-field">
                     <label>Course Code *</label>
+
                     <input type="text" name="course_code" maxlength="30" required placeholder="e.g. EMIS-501"
                         value="<?= course_h($editCourse['course_code'] ?? '') ?>">
                 </div>
 
                 <div class="course-field course-full">
                     <label>Course Title *</label>
+
                     <input type="text" name="course_title" maxlength="180" required placeholder="Enter course title"
                         value="<?= course_h($editCourse['course_title'] ?? '') ?>">
                 </div>
 
                 <div class="course-field">
                     <label>Credit Hours *</label>
+
                     <input type="number" name="credit_hours" min="0.1" max="99.9" step="0.1" required
                         value="<?= course_h($editCourse['credit_hours'] ?? '3.0') ?>">
                 </div>
 
                 <div class="course-field course-full">
                     <label>Description</label>
+
                     <textarea name="description"
                         placeholder="Course description (optional)"><?= course_h($editCourse['description'] ?? '') ?></textarea>
                 </div>
 
             </div>
 
-            <div style="margin-top:18px; display:flex; gap:10px;">
+            <div style="margin-top:18px; display:flex; gap:10px; flex-wrap:wrap;">
+
                 <button type="submit" class="course-btn">
                     <?= $editCourse ? 'Update Course' : 'Add Course' ?>
                 </button>
@@ -731,34 +919,44 @@ require_once __DIR__ . '/../includes/admin-header.php';
                     Cancel
                 </a>
                 <?php endif; ?>
+
             </div>
+
         </form>
     </section>
 
     <!-- COURSE MASTER LIST -->
 
     <section class="course-panel">
+
         <h2>Manage Existing Courses</h2>
 
         <form method="GET" class="course-filter">
+
             <input type="text" name="search" placeholder="Search course code or title" value="<?= course_h($search) ?>">
 
             <select name="category">
                 <option value="0">All Categories</option>
+
                 <?php foreach ($categories as $category): ?>
                 <option value="<?= (int)$category['id'] ?>"
                     <?= $categoryFilter === (int)$category['id'] ? 'selected' : '' ?>>
                     <?= course_h($category['category_name']) ?>
                 </option>
                 <?php endforeach; ?>
+
             </select>
 
             <button type="submit" class="course-btn">Search</button>
+
             <a href="courses.php" class="course-btn secondary">Reset</a>
+
         </form>
 
         <div class="course-table-wrap">
+
             <table class="course-table">
+
                 <thead>
                     <tr>
                         <th>Code</th>
@@ -771,19 +969,28 @@ require_once __DIR__ . '/../includes/admin-header.php';
                 </thead>
 
                 <tbody>
+
                     <?php if (empty($courses)): ?>
+
                     <tr>
                         <td colspan="6">No courses found.</td>
                     </tr>
+
                     <?php else: ?>
 
                     <?php foreach ($courses as $course): ?>
+
                     <tr>
-                        <td><strong><?= course_h($course['course_code']) ?></strong></td>
+
+                        <td>
+                            <strong><?= course_h($course['course_code']) ?></strong>
+                        </td>
 
                         <td><?= course_h($course['course_title']) ?></td>
 
-                        <td><?= course_h($course['category_name'] ?? 'Not assigned') ?></td>
+                        <td>
+                            <?= course_h($course['category_name'] ?? 'Not assigned') ?>
+                        </td>
 
                         <td><?= course_h($course['credit_hours']) ?></td>
 
@@ -794,6 +1001,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
                         </td>
 
                         <td>
+
                             <div class="course-actions">
 
                                 <a class="course-btn small"
@@ -802,29 +1010,41 @@ require_once __DIR__ . '/../includes/admin-header.php';
                                 </a>
 
                                 <form method="POST" onsubmit="return confirm('Change this course status?');">
+
                                     <input type="hidden" name="csrf_token" value="<?= course_h($csrf) ?>">
+
                                     <input type="hidden" name="action" value="toggle_course">
+
                                     <input type="hidden" name="course_id" value="<?= (int)$course['id'] ?>">
 
                                     <button type="submit" class="course-btn small warning">
                                         <?= $course['is_active'] ? 'Deactivate' : 'Activate' ?>
                                     </button>
+
                                 </form>
 
                             </div>
+
                         </td>
+
                     </tr>
+
                     <?php endforeach; ?>
 
                     <?php endif; ?>
+
                 </tbody>
+
             </table>
+
         </div>
+
     </section>
 
     <!-- CREATE COURSE OFFERING -->
 
     <section class="course-panel">
+
         <h2>Create Semester-wise Course Offering</h2>
 
         <p style="color:var(--muted); margin-top:-8px; margin-bottom:20px;">
@@ -833,57 +1053,78 @@ require_once __DIR__ . '/../includes/admin-header.php';
         </p>
 
         <form method="POST">
+
             <input type="hidden" name="csrf_token" value="<?= course_h($csrf) ?>">
+
             <input type="hidden" name="action" value="add_offering">
 
             <div class="course-form-grid">
 
                 <div class="course-field">
                     <label>Course *</label>
+
                     <select name="course_id" required>
                         <option value="">Select Course</option>
+
                         <?php foreach ($activeCourses as $course): ?>
                         <option value="<?= (int)$course['id'] ?>">
-                            <?= course_h($course['course_code'] . ' - ' . $course['course_title']) ?>
+                            <?= course_h(
+                                    $course['course_code'] . ' - ' . $course['course_title']
+                                ) ?>
                         </option>
                         <?php endforeach; ?>
+
                     </select>
                 </div>
 
                 <div class="course-field">
                     <label>Semester *</label>
+
                     <select name="semester_id" required>
                         <option value="">Select Semester</option>
+
                         <?php foreach ($semesters as $semester): ?>
                         <option value="<?= (int)$semester['id'] ?>">
-                            <?= course_h($semester['semester_name'] . ' (' . $semester['status'] . ')') ?>
+                            <?= course_h(
+                                    $semester['semester_name'] .
+                                    ' (' . $semester['status'] . ')'
+                                ) ?>
                         </option>
                         <?php endforeach; ?>
+
                     </select>
                 </div>
 
                 <div class="course-field">
                     <label>Assign Teacher</label>
+
                     <select name="teacher_id">
                         <option value="">Not assigned yet</option>
+
                         <?php foreach ($teachers as $teacher): ?>
                         <option value="<?= (int)$teacher['id'] ?>">
-                            <?= course_h($teacher['full_name'] . ' - ' . $teacher['employee_id']) ?>
+                            <?= course_h(
+                                    $teacher['full_name'] . ' - ' . $teacher['employee_id']
+                                ) ?>
                         </option>
                         <?php endforeach; ?>
+
                     </select>
                 </div>
 
                 <div class="course-field">
                     <label>Student Capacity</label>
+
                     <input type="number" name="capacity" min="1" value="60" required>
                 </div>
 
                 <div class="course-field course-full">
-                    <label style="display:flex; align-items:center; gap:9px;">
-                        <input type="checkbox" name="registration_open" value="1" style="width:auto;">
+
+                    <label class="course-checkbox">
+                        <input type="checkbox" name="registration_open" value="1">
                         Open student registration for this offering
                     </label>
+
                 </div>
 
             </div>
@@ -891,16 +1132,21 @@ require_once __DIR__ . '/../includes/admin-header.php';
             <button type="submit" class="course-btn" style="margin-top:18px;">
                 Create Course Offering
             </button>
+
         </form>
+
     </section>
 
     <!-- EXISTING OFFERINGS -->
 
     <section class="course-panel">
+
         <h2>Semester-wise Offerings & Teacher Assignments</h2>
 
         <div class="course-table-wrap">
+
             <table class="course-table">
+
                 <thead>
                     <tr>
                         <th>Course</th>
@@ -913,16 +1159,22 @@ require_once __DIR__ . '/../includes/admin-header.php';
                 </thead>
 
                 <tbody>
+
                     <?php if (empty($offerings)): ?>
+
                     <tr>
                         <td colspan="6">No course offerings created yet.</td>
                     </tr>
+
                     <?php else: ?>
 
                     <?php foreach ($offerings as $offering): ?>
+
                     <tr>
+
                         <td>
-                            <strong><?= course_h($offering['course_code']) ?></strong><br>
+                            <strong><?= course_h($offering['course_code']) ?></strong>
+                            <br>
                             <?= course_h($offering['course_title']) ?>
                         </td>
 
@@ -941,43 +1193,62 @@ require_once __DIR__ . '/../includes/admin-header.php';
                         </td>
 
                         <td>
+
                             <form method="POST" class="course-inline-form">
+
                                 <input type="hidden" name="csrf_token" value="<?= course_h($csrf) ?>">
+
                                 <input type="hidden" name="action" value="update_offering">
+
                                 <input type="hidden" name="offering_id" value="<?= (int)$offering['offering_id'] ?>">
 
                                 <select name="teacher_id">
+
                                     <option value="">Not assigned</option>
 
                                     <?php foreach ($teachers as $teacher): ?>
+
                                     <option value="<?= (int)$teacher['id'] ?>"
                                         <?= (int)($offering['teacher_id'] ?? 0) === (int)$teacher['id'] ? 'selected' : '' ?>>
                                         <?= course_h($teacher['full_name']) ?>
                                     </option>
+
                                     <?php endforeach; ?>
+
                                 </select>
 
                                 <input type="number" name="capacity" min="1" value="<?= (int)$offering['capacity'] ?>"
-                                    style="width:75px;">
+                                    style="width:75px;" required>
 
                                 <label style="display:flex; align-items:center; gap:5px;">
+
                                     <input type="checkbox" name="registration_open" value="1"
                                         <?= $offering['registration_open'] ? 'checked' : '' ?>>
+
                                     Open
+
                                 </label>
 
                                 <button type="submit" class="course-btn small">
                                     Save
                                 </button>
+
                             </form>
+
                         </td>
+
                     </tr>
+
                     <?php endforeach; ?>
 
                     <?php endif; ?>
+
                 </tbody>
+
             </table>
+
         </div>
+
     </section>
 
 </div>

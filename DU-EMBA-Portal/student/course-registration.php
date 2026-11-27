@@ -145,6 +145,7 @@ $currentSemesterId = $currentSemester
     ? (int)$currentSemester['id']
     : 0;
 
+
 /* =====================================================
    HANDLE COURSE REGISTRATION
 ===================================================== */
@@ -154,7 +155,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
     $submittedToken = $_POST['csrf_token'] ?? '';
     $offeringId = (int)($_POST['offering_id'] ?? 0);
 
-    if (!hash_equals($csrfToken, $submittedToken)) {
+    if (
+        !is_string($submittedToken) ||
+        !hash_equals($csrfToken, $submittedToken)
+    ) {
 
         $errorMessage = 'Invalid request. Please refresh the page and try again.';
 
@@ -173,13 +177,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
             $conn->begin_transaction();
 
             /*
-             * Lock the selected offering while checking seats.
-             * This helps prevent two simultaneous registrations
-             * from exceeding the course capacity.
-             */
+            |--------------------------------------------------------------------------
+            | Lock Offering and Check Availability
+            |--------------------------------------------------------------------------
+            */
 
-            $stmt = $conn->prepare(
-                "SELECT
+            $stmt = $conn->prepare("
+                SELECT
                     co.id,
                     co.course_id,
                     co.semester_id,
@@ -187,12 +191,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
                     co.registration_open,
                     sem.registration_open AS semester_registration_open,
                     sem.status AS semester_status
-                 FROM course_offerings co
-                 INNER JOIN semesters sem ON sem.id = co.semester_id
-                 WHERE co.id = ?
-                 LIMIT 1
-                 FOR UPDATE"
-            );
+                FROM course_offerings co
+                INNER JOIN semesters sem
+                    ON sem.id = co.semester_id
+                WHERE co.id = ?
+                LIMIT 1
+                FOR UPDATE
+            ");
 
             if (!$stmt) {
                 throw new Exception('Unable to check course availability.');
@@ -201,17 +206,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
             $stmt->bind_param("i", $offeringId);
             $stmt->execute();
 
-            $offeringResult = $stmt->get_result();
-            $offering = $offeringResult->fetch_assoc();
-
+            $offering = $stmt->get_result()->fetch_assoc();
             $stmt->close();
 
             if (!$offering) {
                 throw new Exception('Selected course offering was not found.');
             }
 
-            if ($currentSemesterId <= 0 ||
-                (int)$offering['semester_id'] !== $currentSemesterId) {
+            if (
+                $currentSemesterId <= 0 ||
+                (int)$offering['semester_id'] !== $currentSemesterId
+            ) {
                 throw new Exception('You can only register for the current active semester.');
             }
 
@@ -227,17 +232,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
                 throw new Exception('Registration for this course is currently closed.');
             }
 
-            /* ---------------------------------------------
-               CHECK WHETHER STUDENT ALREADY REGISTERED
-            --------------------------------------------- */
+            /*
+            |--------------------------------------------------------------------------
+            | Check Existing Registration for Same Offering
+            |--------------------------------------------------------------------------
+            */
 
-            $stmt = $conn->prepare(
-                "SELECT id, status
-                 FROM course_registrations
-                 WHERE student_id = ?
-                   AND offering_id = ?
-                 LIMIT 1"
-            );
+            $stmt = $conn->prepare("
+                SELECT id, status
+                FROM course_registrations
+                WHERE student_id = ?
+                  AND offering_id = ?
+                LIMIT 1
+                FOR UPDATE
+            ");
 
             if (!$stmt) {
                 throw new Exception('Unable to verify your registration.');
@@ -246,37 +254,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
             $stmt->bind_param("ii", $studentId, $offeringId);
             $stmt->execute();
 
-            $existingResult = $stmt->get_result();
-            $existingRegistration = $existingResult->fetch_assoc();
-
+            $existingRegistration = $stmt->get_result()->fetch_assoc();
             $stmt->close();
 
-            if ($existingRegistration &&
-                $existingRegistration['status'] === 'registered') {
+            if (
+                $existingRegistration &&
+                $existingRegistration['status'] === 'registered'
+            ) {
                 throw new Exception('You have already registered for this course.');
             }
 
-            /* ---------------------------------------------
-               PREVENT SAME COURSE TWICE IN SAME SEMESTER
-            --------------------------------------------- */
+            if (
+                $existingRegistration &&
+                $existingRegistration['status'] === 'completed'
+            ) {
+                throw new Exception('You have already completed this course. Re-registration is not allowed.');
+            }
 
-            $stmt = $conn->prepare(
-                "SELECT cr.id
-                 FROM course_registrations cr
-                 INNER JOIN course_offerings co
+            if (
+                $existingRegistration &&
+                $existingRegistration['status'] !== 'dropped'
+            ) {
+                throw new Exception('This registration cannot be modified. Please contact the Academic Office.');
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Prevent Duplicate Course in Same Semester
+            |--------------------------------------------------------------------------
+            */
+
+            $courseId = (int)$offering['course_id'];
+
+            $stmt = $conn->prepare("
+                SELECT cr.id, cr.status
+                FROM course_registrations cr
+                INNER JOIN course_offerings co
                     ON co.id = cr.offering_id
-                 WHERE cr.student_id = ?
-                   AND co.course_id = ?
-                   AND co.semester_id = ?
-                   AND cr.status = 'registered'
-                 LIMIT 1"
-            );
+                WHERE cr.student_id = ?
+                  AND co.course_id = ?
+                  AND co.semester_id = ?
+                  AND cr.status IN ('registered', 'completed')
+                LIMIT 1
+            ");
 
             if (!$stmt) {
                 throw new Exception('Unable to verify duplicate course registration.');
             }
-
-            $courseId = (int)$offering['course_id'];
 
             $stmt->bind_param(
                 "iii",
@@ -287,25 +311,82 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
 
             $stmt->execute();
 
-            $duplicateResult = $stmt->get_result();
-            $duplicateCourse = $duplicateResult->fetch_assoc();
-
+            $duplicateCourse = $stmt->get_result()->fetch_assoc();
             $stmt->close();
 
             if ($duplicateCourse) {
-                throw new Exception('You are already registered for this course in this semester.');
+                throw new Exception('You are already registered for or have completed this course in this semester.');
             }
 
-            /* ---------------------------------------------
-               CHECK COURSE CAPACITY
-            --------------------------------------------- */
+            /*
+            |--------------------------------------------------------------------------
+            | Check Timetable Clash
+            |--------------------------------------------------------------------------
+            */
 
-            $stmt = $conn->prepare(
-                "SELECT COUNT(*) AS registered_count
-                 FROM course_registrations
-                 WHERE offering_id = ?
-                   AND status = 'registered'"
+            $stmt = $conn->prepare("
+                SELECT
+                    c.course_code,
+                    c.course_title,
+                    cs.start_time,
+                    cs.end_time,
+                    cs.room
+                FROM course_registrations cr
+                INNER JOIN course_offerings co
+                    ON co.id = cr.offering_id
+                INNER JOIN courses c
+                    ON c.id = co.course_id
+                INNER JOIN course_schedules cs
+                    ON cs.offering_id = co.id
+                INNER JOIN course_schedules new_schedule
+                    ON new_schedule.offering_id = ?
+                WHERE cr.student_id = ?
+                  AND co.semester_id = ?
+                  AND cr.status = 'registered'
+                  AND co.id != ?
+                  AND cs.class_day = new_schedule.class_day
+                  AND cs.start_time < new_schedule.end_time
+                  AND cs.end_time > new_schedule.start_time
+                LIMIT 1
+            ");
+
+            if (!$stmt) {
+                throw new Exception('Unable to check timetable conflicts.');
+            }
+
+            $stmt->bind_param(
+                "iiii",
+                $offeringId,
+                $studentId,
+                $currentSemesterId,
+                $offeringId
             );
+
+            $stmt->execute();
+
+            $clash = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            if ($clash) {
+
+                throw new Exception(
+                    'Timetable conflict! Your class overlaps with ' .
+                    $clash['course_code'] . ' - ' . $clash['course_title'] . '.'
+                );
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Check Course Capacity
+            |--------------------------------------------------------------------------
+            */
+
+            $stmt = $conn->prepare("
+                SELECT COUNT(*) AS registered_count
+                FROM course_registrations
+                WHERE offering_id = ?
+                  AND status = 'registered'
+            ");
 
             if (!$stmt) {
                 throw new Exception('Unable to check available seats.');
@@ -314,34 +395,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
             $stmt->bind_param("i", $offeringId);
             $stmt->execute();
 
-            $countResult = $stmt->get_result();
-            $countData = $countResult->fetch_assoc();
-
+            $countData = $stmt->get_result()->fetch_assoc();
             $stmt->close();
 
             $registeredCount = (int)($countData['registered_count'] ?? 0);
             $capacity = (int)$offering['capacity'];
 
-            if ($capacity > 0 && $registeredCount >= $capacity) {
+            if ($capacity <= 0 || $registeredCount >= $capacity) {
                 throw new Exception('Sorry, this course is already full.');
             }
 
-            /* ---------------------------------------------
-               RESTORE DROPPED REGISTRATION OR INSERT NEW
-            --------------------------------------------- */
+            /*
+            |--------------------------------------------------------------------------
+            | Restore Dropped Registration or Insert New
+            |--------------------------------------------------------------------------
+            */
 
-            if ($existingRegistration &&
-                $existingRegistration['status'] === 'dropped') {
+            if (
+                $existingRegistration &&
+                $existingRegistration['status'] === 'dropped'
+            ) {
 
                 $registrationId = (int)$existingRegistration['id'];
 
-                $stmt = $conn->prepare(
-                    "UPDATE course_registrations
-                     SET status = 'registered',
-                         registered_at = NOW()
-                     WHERE id = ?
-                       AND student_id = ?"
-                );
+                $stmt = $conn->prepare("
+                    UPDATE course_registrations
+                    SET
+                        status = 'registered',
+                        registered_at = NOW()
+                    WHERE id = ?
+                      AND student_id = ?
+                      AND status = 'dropped'
+                ");
 
                 if (!$stmt) {
                     throw new Exception('Unable to restore your registration.');
@@ -349,19 +434,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
 
                 $stmt->bind_param("ii", $registrationId, $studentId);
 
-                if (!$stmt->execute()) {
+                if (!$stmt->execute() || $stmt->affected_rows !== 1) {
                     throw new Exception('Unable to restore your registration.');
                 }
 
                 $stmt->close();
 
-            } elseif (!$existingRegistration) {
+            } else {
 
-                $stmt = $conn->prepare(
-                    "INSERT INTO course_registrations
-                        (student_id, offering_id, status, registered_at)
-                     VALUES (?, ?, 'registered', NOW())"
-                );
+                $stmt = $conn->prepare("
+                    INSERT INTO course_registrations
+                    (
+                        student_id,
+                        offering_id,
+                        status,
+                        registered_at
+                    )
+                    VALUES (?, ?, 'registered', NOW())
+                ");
 
                 if (!$stmt) {
                     throw new Exception('Unable to save your registration.');
@@ -370,7 +460,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
                 $stmt->bind_param("ii", $studentId, $offeringId);
 
                 if (!$stmt->execute()) {
-                    throw new Exception('Unable to save your registration.');
+                    throw new Exception('Unable to save your registration: ' . $stmt->error);
                 }
 
                 $stmt->close();
@@ -382,18 +472,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_course'])) {
 
         } catch (Throwable $e) {
 
-            $conn->rollback();
+            try {
+                $conn->rollback();
+            } catch (Throwable $rollbackError) {
+                error_log('Registration Rollback Error: ' . $rollbackError->getMessage());
+            }
 
             $errorMessage = $e->getMessage();
 
-            error_log('Course Registration Transaction Error: ' . $e->getMessage());
+            error_log(
+                'Course Registration Transaction Error: ' .
+                $e->getMessage()
+            );
         }
     }
 }
 
-/* =====================================================
-   GET COURSE OFFERINGS FOR CURRENT SEMESTER
-===================================================== */
 
 if ($currentSemesterId > 0) {
 

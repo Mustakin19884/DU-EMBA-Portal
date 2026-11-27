@@ -42,6 +42,12 @@ $dashboardItems = [
         'description' => 'Manage semester-wise course offerings, teachers and class schedules.',
         'icon' => '◷',
         'link' => 'course-offerings.php'
+    ],
+    [
+        'title' => 'Notice Management',
+        'description' => 'Create, edit, publish and manage notices for students and staff.',
+        'icon' => '▤',
+        'link' => 'notices.php'
     ]
 ];
 ?>
@@ -94,6 +100,7 @@ $dashboardItems = [
     box-shadow: 0 4px 16px rgba(16, 45, 80, 0.05);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
     color: #263548;
+    text-decoration: none;
 }
 
 .dashboard-card:hover {
@@ -180,7 +187,7 @@ $dashboardItems = [
     <p>
         Welcome to the DU EMBA MIS Student Portal Administration Panel.
         Use the management sections below to control users, teachers,
-        academic sessions, semesters and courses.
+        academic sessions, semesters, courses and portal notices.
     </p>
 
 </section>

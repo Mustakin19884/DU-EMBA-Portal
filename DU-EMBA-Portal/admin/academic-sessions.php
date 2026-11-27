@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/functions.php';
 
@@ -9,40 +11,65 @@ $page_title = 'Academic Session Management';
 $success = '';
 $error = '';
 
-// CSRF Token
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// Handle form submission
+$csrfToken = $_SESSION['csrf_token'];
+
+function validSessionDate(?string $date): bool
+{
+    if ($date === null || $date === '') {
+        return true;
+    }
+
+    $parsed = DateTime::createFromFormat('Y-m-d', $date);
+
+    return $parsed && $parsed->format('Y-m-d') === $date;
+}
+
+// Handle POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
+    $submittedToken = $_POST['csrf_token'] ?? '';
+
     if (
-        !isset($_POST['csrf_token']) ||
-        !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])
+        !is_string($submittedToken) ||
+        !hash_equals($csrfToken, $submittedToken)
     ) {
         $error = 'Invalid request. Please try again.';
     } else {
 
         $action = $_POST['action'] ?? '';
 
+        // Create or update session
         if ($action === 'save') {
 
             $id = (int)($_POST['id'] ?? 0);
-            $session_name = trim($_POST['session_name'] ?? '');
-            $start_date = $_POST['start_date'] ?: null;
-            $end_date = $_POST['end_date'] ?: null;
+            $sessionName = trim($_POST['session_name'] ?? '');
+            $startDate = trim($_POST['start_date'] ?? '');
+            $endDate = trim($_POST['end_date'] ?? '');
             $status = $_POST['status'] ?? 'planned';
 
-            $allowed_statuses = ['planned', 'active', 'completed'];
+            $allowedStatuses = ['planned', 'active', 'completed'];
 
-            if ($session_name === '') {
+            $startDate = $startDate !== '' ? $startDate : null;
+            $endDate = $endDate !== '' ? $endDate : null;
+
+            if ($sessionName === '') {
                 $error = 'Academic session name is required.';
-            } elseif (!in_array($status, $allowed_statuses, true)) {
+            } elseif (strlen($sessionName) > 120) {
+                $error = 'Session name cannot exceed 120 characters.';
+            } elseif (!in_array($status, $allowedStatuses, true)) {
                 $error = 'Invalid session status.';
             } elseif (
-                $start_date && $end_date &&
-                $start_date > $end_date
+                !validSessionDate($startDate) ||
+                !validSessionDate($endDate)
+            ) {
+                $error = 'Please provide valid dates.';
+            } elseif (
+                $startDate && $endDate &&
+                $startDate > $endDate
             ) {
                 $error = 'End date cannot be earlier than start date.';
             } else {
@@ -60,9 +87,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     $stmt->bind_param(
                         "ssssi",
-                        $session_name,
-                        $start_date,
-                        $end_date,
+                        $sessionName,
+                        $startDate,
+                        $endDate,
                         $status,
                         $id
                     );
@@ -77,54 +104,121 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     $stmt->bind_param(
                         "ssss",
-                        $session_name,
-                        $start_date,
-                        $end_date,
+                        $sessionName,
+                        $startDate,
+                        $endDate,
                         $status
                     );
                 }
 
                 if ($stmt->execute()) {
+
                     $success = $id > 0
                         ? 'Academic session updated successfully.'
                         : 'Academic session created successfully.';
+
                 } else {
-                    $error = $stmt->errno === 1062
-                        ? 'This academic session already exists.'
-                        : 'Database error: ' . $stmt->error;
+
+                    if ($stmt->errno === 1062) {
+                        $error = 'This academic session already exists.';
+                    } else {
+                        $error = 'Database error: ' . $stmt->error;
+                    }
                 }
 
                 $stmt->close();
+            }
+        }
+
+        // Delete session
+        elseif ($action === 'delete') {
+
+            $id = (int)($_POST['id'] ?? 0);
+
+            if ($id <= 0) {
+                $error = 'Invalid academic session.';
+            } else {
+
+                // Prevent deletion if semesters already use this session
+                $check = $conn->prepare("
+                    SELECT COUNT(*) AS total
+                    FROM semesters
+                    WHERE session_id = ?
+                ");
+
+                $check->bind_param("i", $id);
+                $check->execute();
+
+                $used = (int)$check->get_result()
+                    ->fetch_assoc()['total'];
+
+                $check->close();
+
+                if ($used > 0) {
+
+                    $error = 'This session cannot be deleted because semesters are linked to it.';
+
+                } else {
+
+                    $stmt = $conn->prepare("
+                        DELETE FROM academic_sessions
+                        WHERE id = ?
+                    ");
+
+                    $stmt->bind_param("i", $id);
+
+                    if ($stmt->execute() && $stmt->affected_rows > 0) {
+                        $success = 'Academic session deleted successfully.';
+                    } else {
+                        $error = 'Academic session could not be deleted.';
+                    }
+
+                    $stmt->close();
+                }
             }
         }
     }
 }
 
 // Load session for editing
-$edit_session = null;
+$editSession = null;
 
 if (isset($_GET['edit'])) {
-    $edit_id = (int)$_GET['edit'];
 
-    $stmt = $conn->prepare("
-        SELECT * FROM academic_sessions WHERE id = ?
-    ");
-    $stmt->bind_param("i", $edit_id);
-    $stmt->execute();
+    $editId = (int)$_GET['edit'];
 
-    $edit_session = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
+    if ($editId > 0) {
 
-    if (!$edit_session) {
-        $error = 'Academic session not found.';
+        $stmt = $conn->prepare("
+            SELECT *
+            FROM academic_sessions
+            WHERE id = ?
+        ");
+
+        $stmt->bind_param("i", $editId);
+        $stmt->execute();
+
+        $editSession = $stmt->get_result()->fetch_assoc();
+
+        $stmt->close();
+
+        if (!$editSession) {
+            $error = 'Academic session not found.';
+        }
     }
 }
 
 // Load all academic sessions
 $sessions = $conn->query("
-    SELECT *
-    FROM academic_sessions
-    ORDER BY start_date DESC, id DESC
+    SELECT
+        a.*,
+        (
+            SELECT COUNT(*)
+            FROM semesters s
+            WHERE s.session_id = a.id
+        ) AS semester_count
+    FROM academic_sessions a
+    ORDER BY a.start_date DESC, a.id DESC
 ");
 
 require_once __DIR__ . '/../includes/admin-header.php';
@@ -132,9 +226,11 @@ require_once __DIR__ . '/../includes/admin-header.php';
 
 <style>
 .session-container {
+    width: 100%;
     max-width: 1450px;
-    margin: 30px auto;
-    padding: 0 24px;
+    margin: 20px auto;
+    padding: 0 10px;
+    box-sizing: border-box;
 }
 
 .session-heading {
@@ -148,14 +244,16 @@ require_once __DIR__ . '/../includes/admin-header.php';
 
 .session-heading p {
     color: var(--muted);
+    margin-top: 0;
 }
 
 .session-card {
-    background: var(--white);
+    background: var(--white, #fff);
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 24px;
     margin-bottom: 25px;
+    box-sizing: border-box;
 }
 
 .session-card h3 {
@@ -188,6 +286,13 @@ require_once __DIR__ . '/../includes/admin-header.php';
     border-radius: 7px;
     font-size: 14px;
     box-sizing: border-box;
+    background: #fff;
+}
+
+.session-form input:focus,
+.session-form select:focus {
+    outline: none;
+    border-color: var(--navy);
 }
 
 .session-btn {
@@ -213,8 +318,14 @@ require_once __DIR__ . '/../includes/admin-header.php';
     text-decoration: none;
 }
 
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+}
+
 .session-table {
     width: 100%;
+    min-width: 750px;
     border-collapse: collapse;
 }
 
@@ -223,17 +334,17 @@ require_once __DIR__ . '/../includes/admin-header.php';
     padding: 14px 12px;
     border-bottom: 1px solid var(--border);
     text-align: left;
+    vertical-align: middle;
 }
 
 .session-table th {
     background: var(--beige);
     color: var(--navy);
+    white-space: nowrap;
 }
 
-.session-table a {
-    color: var(--navy);
-    font-weight: 600;
-    text-decoration: none;
+.session-table tbody tr:hover {
+    background: #fafbfd;
 }
 
 .status-badge {
@@ -276,8 +387,37 @@ require_once __DIR__ . '/../includes/admin-header.php';
     color: #a12626;
 }
 
-.table-responsive {
-    overflow-x: auto;
+.action-links {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.edit-link {
+    color: var(--navy);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.delete-form {
+    display: inline;
+    margin: 0;
+}
+
+.delete-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    color: #b42318;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.empty-state {
+    padding: 25px;
+    text-align: center;
+    color: var(--muted);
 }
 
 @media (max-width: 650px) {
@@ -290,7 +430,11 @@ require_once __DIR__ . '/../includes/admin-header.php';
     }
 
     .session-container {
-        padding: 0 12px;
+        padding: 0;
+    }
+
+    .session-card {
+        padding: 16px;
     }
 }
 </style>
@@ -299,7 +443,9 @@ require_once __DIR__ . '/../includes/admin-header.php';
 
     <div class="session-heading">
         <h2>Academic Session Management</h2>
-        <p>Create and manage academic sessions for the DU EMBA MIS Portal.</p>
+        <p>
+            Create and manage academic sessions for the DU EMBA MIS Portal.
+        </p>
     </div>
 
     <?php if ($success): ?>
@@ -317,66 +463,78 @@ require_once __DIR__ . '/../includes/admin-header.php';
     <div class="session-card">
 
         <h3>
-            <?= $edit_session ? 'Edit Academic Session' : 'Create New Academic Session' ?>
+            <?= $editSession
+                ? 'Edit Academic Session'
+                : 'Create New Academic Session' ?>
         </h3>
 
         <form method="POST" class="session-form">
 
-            <input type="hidden" name="csrf_token" value="<?= e($_SESSION['csrf_token']) ?>">
+            <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
 
             <input type="hidden" name="action" value="save">
 
-            <input type="hidden" name="id" value="<?= (int)($edit_session['id'] ?? 0) ?>">
+            <input type="hidden" name="id" value="<?= (int)($editSession['id'] ?? 0) ?>">
 
             <div class="full-width">
                 <label>Academic Session Name *</label>
-                <input type="text" name="session_name" placeholder="Example: 2027 Academic Session"
-                    value="<?= e($edit_session['session_name'] ?? '') ?>" required>
+
+                <input type="text" name="session_name" maxlength="120" placeholder="Example: 2027 Academic Session"
+                    value="<?= e($editSession['session_name'] ?? '') ?>" required>
             </div>
 
             <div>
                 <label>Start Date</label>
-                <input type="date" name="start_date" value="<?= e($edit_session['start_date'] ?? '') ?>">
+
+                <input type="date" name="start_date" value="<?= e($editSession['start_date'] ?? '') ?>">
             </div>
 
             <div>
                 <label>End Date</label>
-                <input type="date" name="end_date" value="<?= e($edit_session['end_date'] ?? '') ?>">
+
+                <input type="date" name="end_date" value="<?= e($editSession['end_date'] ?? '') ?>">
             </div>
 
             <div class="full-width">
                 <label>Status</label>
+
+                <?php
+                $currentStatus = $editSession['status'] ?? 'planned';
+                ?>
+
                 <select name="status">
-                    <?php
-                    $current_status = $edit_session['status'] ?? 'planned';
-                    ?>
-                    <option value="planned" <?= $current_status === 'planned' ? 'selected' : '' ?>>
+
+                    <option value="planned" <?= $currentStatus === 'planned' ? 'selected' : '' ?>>
                         Planned
                     </option>
 
-                    <option value="active" <?= $current_status === 'active' ? 'selected' : '' ?>>
+                    <option value="active" <?= $currentStatus === 'active' ? 'selected' : '' ?>>
                         Active
                     </option>
 
-                    <option value="completed" <?= $current_status === 'completed' ? 'selected' : '' ?>>
+                    <option value="completed" <?= $currentStatus === 'completed' ? 'selected' : '' ?>>
                         Completed
                     </option>
+
                 </select>
             </div>
 
             <div class="full-width">
+
                 <button type="submit" class="session-btn">
-                    <?= $edit_session ? 'Update Session' : 'Create Session' ?>
+                    <?= $editSession ? 'Update Session' : 'Create Session' ?>
                 </button>
 
-                <?php if ($edit_session): ?>
+                <?php if ($editSession): ?>
                 <a href="academic-sessions.php" class="cancel-btn">
                     Cancel
                 </a>
                 <?php endif; ?>
+
             </div>
 
         </form>
+
     </div>
 
     <div class="session-card">
@@ -384,6 +542,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
         <h3>All Academic Sessions</h3>
 
         <div class="table-responsive">
+
             <table class="session-table">
 
                 <thead>
@@ -392,12 +551,14 @@ require_once __DIR__ . '/../includes/admin-header.php';
                         <th>Session Name</th>
                         <th>Start Date</th>
                         <th>End Date</th>
+                        <th>Semesters</th>
                         <th>Status</th>
                         <th>Action</th>
                     </tr>
                 </thead>
 
                 <tbody>
+
                     <?php if ($sessions && $sessions->num_rows > 0): ?>
 
                     <?php $sl = 1; ?>
@@ -405,15 +566,26 @@ require_once __DIR__ . '/../includes/admin-header.php';
                     <?php while ($row = $sessions->fetch_assoc()): ?>
 
                     <tr>
+
                         <td><?= $sl++ ?></td>
 
                         <td>
-                            <strong><?= e($row['session_name']) ?></strong>
+                            <strong>
+                                <?= e($row['session_name']) ?>
+                            </strong>
                         </td>
 
-                        <td><?= e($row['start_date'] ?? '—') ?></td>
+                        <td>
+                            <?= e($row['start_date'] ?? '—') ?>
+                        </td>
 
-                        <td><?= e($row['end_date'] ?? '—') ?></td>
+                        <td>
+                            <?= e($row['end_date'] ?? '—') ?>
+                        </td>
+
+                        <td>
+                            <?= (int)$row['semester_count'] ?>
+                        </td>
 
                         <td>
                             <span class="status-badge status-<?= e($row['status']) ?>">
@@ -422,10 +594,40 @@ require_once __DIR__ . '/../includes/admin-header.php';
                         </td>
 
                         <td>
-                            <a href="academic-sessions.php?edit=<?= (int)$row['id'] ?>">
-                                Edit
-                            </a>
+                            <div class="action-links">
+
+                                <a class="edit-link" href="academic-sessions.php?edit=<?= (int)$row['id'] ?>">
+                                    Edit
+                                </a>
+
+                                <?php if ((int)$row['semester_count'] === 0): ?>
+
+                                <form method="POST" class="delete-form"
+                                    onsubmit="return confirm('Are you sure you want to delete this academic session?');">
+
+                                    <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+
+                                    <input type="hidden" name="action" value="delete">
+
+                                    <input type="hidden" name="id" value="<?= (int)$row['id'] ?>">
+
+                                    <button type="submit" class="delete-btn">
+                                        Delete
+                                    </button>
+
+                                </form>
+
+                                <?php else: ?>
+
+                                <span class="muted">
+                                    In Use
+                                </span>
+
+                                <?php endif; ?>
+
+                            </div>
                         </td>
+
                     </tr>
 
                     <?php endwhile; ?>
@@ -433,14 +635,19 @@ require_once __DIR__ . '/../includes/admin-header.php';
                     <?php else: ?>
 
                     <tr>
-                        <td colspan="6">No academic sessions found.</td>
+                        <td colspan="7" class="empty-state">
+                            No academic sessions found.
+                        </td>
                     </tr>
 
                     <?php endif; ?>
+
                 </tbody>
 
             </table>
+
         </div>
+
     </div>
 
 </div>
