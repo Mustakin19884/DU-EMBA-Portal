@@ -23,12 +23,138 @@ $allowedAudiences = [
 
 $adminId = (int)($_SESSION['user_id'] ?? 0);
 
-// CSRF token
+$uploadDirectory = __DIR__ . '/../uploads/notices/';
+$uploadRelativePath = 'uploads/notices/';
+
+$maxFileSize = 5 * 1024 * 1024;
+
+/*
+|--------------------------------------------------------------------------
+| PDF UPLOAD HELPER
+|--------------------------------------------------------------------------
+*/
+function uploadNoticePdf(
+    array $file,
+    string $uploadDirectory,
+    string $relativePath,
+    int $maxFileSize
+): ?string {
+
+    if (!isset($file['error']) || $file['error'] === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('PDF upload failed. Please try again.');
+    }
+
+    if ((int)$file['size'] <= 0 || (int)$file['size'] > $maxFileSize) {
+        throw new RuntimeException('PDF file must not exceed 5 MB.');
+    }
+
+    $extension = strtolower(
+        pathinfo($file['name'], PATHINFO_EXTENSION)
+    );
+
+    if ($extension !== 'pdf') {
+        throw new RuntimeException('Only PDF files are allowed.');
+    }
+
+    if (!is_uploaded_file($file['tmp_name'])) {
+        throw new RuntimeException('Invalid uploaded file.');
+    }
+
+    if (!class_exists('finfo')) {
+        throw new RuntimeException(
+            'PHP Fileinfo extension is required for PDF uploads.'
+        );
+    }
+
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $mimeType = $finfo->file($file['tmp_name']);
+
+    if (!in_array($mimeType, ['application/pdf', 'application/x-pdf'], true)) {
+        throw new RuntimeException('The uploaded file is not a valid PDF.');
+    }
+
+    $handle = fopen($file['tmp_name'], 'rb');
+
+    if ($handle === false) {
+        throw new RuntimeException('Could not read the uploaded file.');
+    }
+
+    $signature = fread($handle, 5);
+    fclose($handle);
+
+    if ($signature !== '%PDF-') {
+        throw new RuntimeException('Invalid PDF file.');
+    }
+
+    if (!is_dir($uploadDirectory)) {
+        if (!mkdir($uploadDirectory, 0755, true) && !is_dir($uploadDirectory)) {
+            throw new RuntimeException('Could not create upload directory.');
+        }
+    }
+
+    if (!is_writable($uploadDirectory)) {
+        throw new RuntimeException('Upload directory is not writable.');
+    }
+
+    $fileName = bin2hex(random_bytes(16)) . '.pdf';
+
+    $destination = $uploadDirectory . $fileName;
+
+    if (!move_uploaded_file($file['tmp_name'], $destination)) {
+        throw new RuntimeException('Could not save PDF file.');
+    }
+
+    return $relativePath . $fileName;
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| DELETE PDF HELPER
+|--------------------------------------------------------------------------
+*/
+function deleteNoticePdf(
+    ?string $relativePath,
+    string $uploadDirectory,
+    string $relativeDirectory
+): void {
+
+    if (!$relativePath || !str_starts_with($relativePath, $relativeDirectory)) {
+        return;
+    }
+
+    $fileName = basename($relativePath);
+
+    if (
+        $fileName === '' ||
+        !preg_match('/^[a-f0-9]{32}\.pdf$/', $fileName)
+    ) {
+        return;
+    }
+
+    $filePath = $uploadDirectory . $fileName;
+
+    if (is_file($filePath)) {
+        unlink($filePath);
+    }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| CSRF TOKEN
+|--------------------------------------------------------------------------
+*/
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
 $csrfToken = $_SESSION['csrf_token'];
+
 
 /*
 |--------------------------------------------------------------------------
@@ -43,7 +169,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         !is_string($submittedToken) ||
         !hash_equals($csrfToken, $submittedToken)
     ) {
-        $message = 'Invalid request. Please refresh the page and try again.';
+
+        $message = 'Invalid request. Please refresh the page.';
         $message_type = 'error';
 
     } else {
@@ -62,6 +189,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $audience = $_POST['audience'] ?? 'all';
             $publish = isset($_POST['publish']) ? 1 : 0;
 
+            $newAttachment = null;
+
             if ($title === '' || $body === '') {
 
                 $message = 'Notice title and message are required.';
@@ -76,27 +205,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 try {
 
+                    $newAttachment = uploadNoticePdf(
+                        $_FILES['attachment'] ?? [],
+                        $uploadDirectory,
+                        $uploadRelativePath,
+                        $maxFileSize
+                    );
+
                     $stmt = $conn->prepare(
                         "INSERT INTO notices
                         (
                             title,
                             body,
+                            attachment_path,
                             audience,
                             published_by,
                             published_at,
                             is_published
                         )
                         VALUES (
-                            ?, ?, ?, ?,
+                            ?, ?, ?, ?, ?,
                             IF(? = 1, NOW(), NULL),
                             ?
                         )"
                     );
 
                     $stmt->bind_param(
-                        'sssiii',
+                        'ssssiii',
                         $title,
                         $body,
+                        $newAttachment,
                         $audience,
                         $adminId,
                         $publish,
@@ -107,18 +245,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->close();
 
                     $message = $publish
-                        ? 'Notice published successfully.'
-                        : 'Notice saved as draft successfully.';
+                        ? 'Notice with attachment published successfully.'
+                        : 'Notice with attachment saved as draft.';
 
                     $message_type = 'success';
 
                 } catch (Throwable $e) {
 
-                    $message = 'Could not create notice. Please try again.';
+                    if ($newAttachment !== null) {
+                        deleteNoticePdf(
+                            $newAttachment,
+                            $uploadDirectory,
+                            $uploadRelativePath
+                        );
+                    }
+
+                    $message = $e instanceof RuntimeException
+                        ? $e->getMessage()
+                        : 'Could not create notice. Please try again.';
+
                     $message_type = 'error';
                 }
             }
         }
+
 
         /*
         |--------------------------------------------------------------------------
@@ -136,6 +286,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $title = trim($_POST['title'] ?? '');
             $body = trim($_POST['body'] ?? '');
             $audience = $_POST['audience'] ?? 'all';
+
+            $newAttachment = null;
 
             if (
                 !$noticeId ||
@@ -157,40 +309,101 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 try {
 
+                    // Load existing attachment.
+                    $stmt = $conn->prepare(
+                        "SELECT attachment_path
+                         FROM notices
+                         WHERE id = ?
+                         LIMIT 1"
+                    );
+
+                    $stmt->bind_param('i', $noticeId);
+                    $stmt->execute();
+
+                    $existingNotice = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+
+                    if (!$existingNotice) {
+                        throw new RuntimeException('Notice not found.');
+                    }
+
+                    $oldAttachment = $existingNotice['attachment_path'];
+
+                    // Upload replacement PDF if provided.
+                    $newAttachment = uploadNoticePdf(
+                        $_FILES['attachment'] ?? [],
+                        $uploadDirectory,
+                        $uploadRelativePath,
+                        $maxFileSize
+                    );
+
+                    $removeAttachment = isset($_POST['remove_attachment']);
+
+                    if ($newAttachment !== null) {
+                        $attachmentToSave = $newAttachment;
+                    } elseif ($removeAttachment) {
+                        $attachmentToSave = null;
+                    } else {
+                        $attachmentToSave = $oldAttachment;
+                    }
+
                     $stmt = $conn->prepare(
                         "UPDATE notices
                          SET title = ?,
                              body = ?,
+                             attachment_path = ?,
                              audience = ?
                          WHERE id = ?"
                     );
 
                     $stmt->bind_param(
-                        'sssi',
+                        'ssssi',
                         $title,
                         $body,
+                        $attachmentToSave,
                         $audience,
                         $noticeId
                     );
 
                     $stmt->execute();
+                    $stmt->close();
 
-                    if ($stmt->affected_rows >= 0) {
-                        $message = 'Notice updated successfully.';
-                        $message_type = 'success';
-                        $editId = 0;
+                    // Remove old PDF only after successful database update.
+                    if (
+                        $oldAttachment &&
+                        $oldAttachment !== $attachmentToSave
+                    ) {
+                        deleteNoticePdf(
+                            $oldAttachment,
+                            $uploadDirectory,
+                            $uploadRelativePath
+                        );
                     }
 
-                    $stmt->close();
+                    $message = 'Notice updated successfully.';
+                    $message_type = 'success';
+                    $editId = 0;
 
                 } catch (Throwable $e) {
 
-                    $message = 'Could not update notice.';
+                    if ($newAttachment !== null) {
+                        deleteNoticePdf(
+                            $newAttachment,
+                            $uploadDirectory,
+                            $uploadRelativePath
+                        );
+                    }
+
+                    $message = $e instanceof RuntimeException
+                        ? $e->getMessage()
+                        : 'Could not update notice. Please try again.';
+
                     $message_type = 'error';
                     $editId = $noticeId;
                 }
             }
         }
+
 
         /*
         |--------------------------------------------------------------------------
@@ -209,10 +422,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $stmt = $conn->prepare(
                     "UPDATE notices
-                     SET is_published =
-                            IF(is_published = 1, 0, 1),
-                         published_at =
-                            IF(is_published = 1, NULL, NOW())
+                     SET published_at =
+                            IF(is_published = 1, NULL, NOW()),
+                         is_published =
+                            IF(is_published = 1, 0, 1)
                      WHERE id = ?"
                 );
 
@@ -230,10 +443,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->close();
 
             } else {
+
                 $message = 'Invalid notice selected.';
                 $message_type = 'error';
             }
         }
+
 
         /*
         |--------------------------------------------------------------------------
@@ -251,30 +466,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($noticeId && $noticeId > 0) {
 
                 $stmt = $conn->prepare(
-                    "DELETE FROM notices WHERE id = ?"
+                    "SELECT attachment_path
+                     FROM notices
+                     WHERE id = ?
+                     LIMIT 1"
                 );
 
                 $stmt->bind_param('i', $noticeId);
                 $stmt->execute();
 
-                if ($stmt->affected_rows > 0) {
-                    $message = 'Notice deleted successfully.';
-                    $message_type = 'success';
-                    $editId = 0;
+                $notice = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+
+                if ($notice) {
+
+                    $stmt = $conn->prepare(
+                        "DELETE FROM notices WHERE id = ?"
+                    );
+
+                    $stmt->bind_param('i', $noticeId);
+                    $stmt->execute();
+
+                    $deleted = $stmt->affected_rows > 0;
+                    $stmt->close();
+
+                    if ($deleted) {
+
+                        deleteNoticePdf(
+                            $notice['attachment_path'],
+                            $uploadDirectory,
+                            $uploadRelativePath
+                        );
+
+                        $message = 'Notice and its attachment deleted successfully.';
+                        $message_type = 'success';
+                        $editId = 0;
+
+                    } else {
+
+                        $message = 'Could not delete notice.';
+                        $message_type = 'error';
+                    }
+
                 } else {
+
                     $message = 'Notice not found.';
                     $message_type = 'error';
                 }
 
-                $stmt->close();
-
             } else {
+
                 $message = 'Invalid notice selected.';
                 $message_type = 'error';
             }
         }
     }
 }
+
 
 /*
 |--------------------------------------------------------------------------
@@ -286,7 +534,13 @@ $editNotice = null;
 if ($editId > 0) {
 
     $stmt = $conn->prepare(
-        "SELECT id, title, body, audience, is_published
+        "SELECT
+            id,
+            title,
+            body,
+            audience,
+            attachment_path,
+            is_published
          FROM notices
          WHERE id = ?
          LIMIT 1"
@@ -296,7 +550,6 @@ if ($editId > 0) {
     $stmt->execute();
 
     $editNotice = $stmt->get_result()->fetch_assoc();
-
     $stmt->close();
 
     if (!$editNotice) {
@@ -304,6 +557,7 @@ if ($editId > 0) {
         $message_type = 'error';
     }
 }
+
 
 /*
 |--------------------------------------------------------------------------
@@ -316,6 +570,7 @@ $result = $conn->query(
         n.title,
         n.body,
         n.audience,
+        n.attachment_path,
         n.is_published,
         n.published_at,
         n.created_at,
@@ -324,6 +579,7 @@ $result = $conn->query(
      LEFT JOIN users u ON u.id = n.published_by
      ORDER BY n.id DESC"
 );
+
 
 /*
 |--------------------------------------------------------------------------
@@ -336,14 +592,16 @@ require_once __DIR__ . '/../includes/admin-header.php';
 <div class="page-header">
     <div>
         <h1>Notice Management</h1>
-        <p>Create, publish and manage notices for DU EMBA MIS users.</p>
+        <p>Create, publish and manage notices with PDF attachments.</p>
     </div>
 </div>
 
 <?php if ($message !== ''): ?>
+
 <div class="alert <?= $message_type === 'error' ? 'alert-danger' : 'alert-success' ?>">
     <?= e($message) ?>
 </div>
+
 <?php endif; ?>
 
 
@@ -354,7 +612,8 @@ require_once __DIR__ . '/../includes/admin-header.php';
 
     <h2>Edit Notice</h2>
 
-    <form method="POST" action="<?= BASE_URL ?>/admin/notices.php?edit=<?= (int)$editNotice['id'] ?>">
+    <form method="POST" enctype="multipart/form-data"
+        action="<?= BASE_URL ?>/admin/notices.php?edit=<?= (int)$editNotice['id'] ?>">
 
         <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
 
@@ -397,6 +656,44 @@ require_once __DIR__ . '/../includes/admin-header.php';
             <textarea id="edit_body" name="body" rows="7" required><?= e($editNotice['body']) ?></textarea>
         </div>
 
+        <div class="form-group attachment-group">
+
+            <label>Current PDF Attachment</label>
+
+            <?php if (!empty($editNotice['attachment_path'])): ?>
+
+            <p>
+                <a href="<?= BASE_URL ?>/<?= e($editNotice['attachment_path']) ?>" target="_blank" rel="noopener">
+                    <span class="pdf-icon">PDF</span>
+                    View Current Attachment
+                </a>
+            </p>
+
+            <label class="remove-pdf">
+                <input type="checkbox" name="remove_attachment" value="1">
+                Remove current PDF attachment
+            </label>
+
+            <?php else: ?>
+
+            <p class="muted-text">No PDF currently attached.</p>
+
+            <?php endif; ?>
+
+        </div>
+
+        <div class="form-group">
+
+            <label for="edit_attachment">
+                Upload Replacement PDF (Optional)
+            </label>
+
+            <input type="file" id="edit_attachment" name="attachment" accept=".pdf,application/pdf">
+
+            <small>PDF only. Maximum file size: 5 MB.</small>
+
+        </div>
+
         <button type="submit" class="btn btn-primary">
             Save Changes
         </button>
@@ -417,7 +714,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
 
     <h2>Create New Notice</h2>
 
-    <form method="POST" action="<?= BASE_URL ?>/admin/notices.php">
+    <form method="POST" enctype="multipart/form-data" action="<?= BASE_URL ?>/admin/notices.php">
 
         <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
 
@@ -451,6 +748,16 @@ require_once __DIR__ . '/../includes/admin-header.php';
             <label for="body">Notice Message *</label>
 
             <textarea id="body" name="body" rows="7" required placeholder="Write your notice here..."></textarea>
+        </div>
+
+        <div class="form-group">
+
+            <label for="attachment">PDF Attachment (Optional)</label>
+
+            <input type="file" id="attachment" name="attachment" accept=".pdf,application/pdf">
+
+            <small>Only PDF files are allowed. Maximum file size: 5 MB.</small>
+
         </div>
 
         <div class="form-group notice-publish-option">
@@ -488,6 +795,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
                 <tr>
                     <th>Title</th>
                     <th>Audience</th>
+                    <th>Attachment</th>
                     <th>Created By</th>
                     <th>Date</th>
                     <th>Status</th>
@@ -514,6 +822,22 @@ require_once __DIR__ . '/../includes/admin-header.php';
                     </td>
 
                     <td>
+
+                        <?php if (!empty($notice['attachment_path'])): ?>
+
+                        <a href="<?= BASE_URL ?>/<?= e($notice['attachment_path']) ?>" target="_blank" rel="noopener">
+                            View PDF
+                        </a>
+
+                        <?php else: ?>
+
+                        <span class="muted-text">No PDF</span>
+
+                        <?php endif; ?>
+
+                    </td>
+
+                    <td>
                         <?= e($notice['publisher_name'] ?? 'Admin') ?>
                     </td>
 
@@ -525,15 +849,11 @@ require_once __DIR__ . '/../includes/admin-header.php';
 
                         <?php if ((int)$notice['is_published'] === 1): ?>
 
-                        <span class="status-active">
-                            Published
-                        </span>
+                        <span class="status-active">Published</span>
 
                         <?php else: ?>
 
-                        <span class="status-inactive">
-                            Draft
-                        </span>
+                        <span class="status-inactive">Draft</span>
 
                         <?php endif; ?>
 
@@ -567,7 +887,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
                             </form>
 
                             <form method="POST" action="<?= BASE_URL ?>/admin/notices.php"
-                                onsubmit="return confirm('Are you sure you want to delete this notice?');">
+                                onsubmit="return confirm('Are you sure you want to delete this notice and its PDF attachment?');">
 
                                 <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
 
@@ -592,7 +912,7 @@ require_once __DIR__ . '/../includes/admin-header.php';
                 <?php else: ?>
 
                 <tr>
-                    <td colspan="6">
+                    <td colspan="7">
                         No notices found. Create your first notice above.
                     </td>
                 </tr>
@@ -638,21 +958,57 @@ require_once __DIR__ . '/../includes/admin-header.php';
     margin-bottom: 20px;
 }
 
-.notice-publish-option label {
+.notice-publish-option label,
+.remove-pdf {
     display: flex;
     align-items: center;
     gap: 8px;
     font-weight: 600;
 }
 
-.notice-publish-option input {
+.notice-publish-option input,
+.remove-pdf input {
     width: auto;
 }
 
-.notice-publish-option small {
+.notice-publish-option small,
+.attachment-group small,
+.form-group small {
     display: block;
     margin-top: 6px;
     color: #687789;
+}
+
+.attachment-group {
+    padding: 14px;
+    background: #f8f7f3;
+    border: 1px solid #e1e5eb;
+    border-radius: 8px;
+}
+
+.attachment-group a {
+    color: #102d50;
+    font-weight: 600;
+}
+
+.pdf-icon {
+    display: inline-block;
+    padding: 4px 7px;
+    margin-right: 5px;
+    background: #102d50;
+    color: white;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.muted-text {
+    color: #687789;
+    font-size: 13px;
+}
+
+.remove-pdf {
+    margin-top: 12px;
+    font-size: 13px;
 }
 
 .admin-page-footer {

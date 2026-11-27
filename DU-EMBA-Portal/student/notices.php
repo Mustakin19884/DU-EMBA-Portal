@@ -5,53 +5,113 @@ require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../config/database.php';
 
-require_role('student');
+/*
+|--------------------------------------------------------------------------
+| ROLE-BASED ACCESS
+|--------------------------------------------------------------------------
+*/
+
+require_role('student', 'teacher', 'academic', 'accounts');
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-$pageTitle = 'Notices & Notifications';
-
+$role = $_SESSION['role'] ?? '';
 $userId = (int)($_SESSION['user_id'] ?? 0);
-$studentName = $_SESSION['full_name'] ?? 'Student';
+
+$roleSettings = [
+    'student' => [
+        'audience' => 'student',
+        'name' => 'Student',
+        'pageTitle' => 'Notices & Notifications',
+        'emptyMessage' => 'There are currently no notices available for students.'
+    ],
+
+    'teacher' => [
+        'audience' => 'teacher',
+        'name' => 'Teacher',
+        'pageTitle' => 'Notices & Notifications',
+        'emptyMessage' => 'There are currently no notices available for teachers.'
+    ],
+
+    'academic' => [
+        'audience' => 'academic',
+        'name' => 'Academic Officer',
+        'pageTitle' => 'Notices & Notifications',
+        'emptyMessage' => 'There are currently no notices available for the Academic Office.'
+    ],
+
+    'accounts' => [
+        'audience' => 'accounts',
+        'name' => 'Accounts Officer',
+        'pageTitle' => 'Notices & Notifications',
+        'emptyMessage' => 'There are currently no notices available for Accounts.'
+    ]
+];
+
+if (!isset($roleSettings[$role])) {
+    http_response_code(403);
+    exit('403 Forbidden: You are not authorized to access this page.');
+}
 
 if ($userId <= 0) {
     die('Invalid user session. Please log in again.');
 }
 
-/* =====================================================
-   CSRF TOKEN
-===================================================== */
+$settings = $roleSettings[$role];
 
-if (empty($_SESSION['student_notice_csrf'])) {
-    $_SESSION['student_notice_csrf'] = bin2hex(random_bytes(32));
+$pageTitle = $settings['pageTitle'];
+$userName = $_SESSION['full_name'] ?? $settings['name'];
+$audience = $settings['audience'];
+
+$dashboardUrl = dashboard_url($role);
+
+/*
+|--------------------------------------------------------------------------
+| CSRF TOKEN
+|--------------------------------------------------------------------------
+*/
+
+if (empty($_SESSION['portal_notice_csrf'])) {
+    $_SESSION['portal_notice_csrf'] = bin2hex(random_bytes(32));
 }
 
-$csrfToken = $_SESSION['student_notice_csrf'];
+$csrfToken = $_SESSION['portal_notice_csrf'];
 
 $successMessage = '';
 $errorMessage = '';
 
-/* =====================================================
-   HELPER FUNCTIONS
-===================================================== */
+/*
+|--------------------------------------------------------------------------
+| HELPER FUNCTION
+|--------------------------------------------------------------------------
+*/
 
-function student_notice_escape($value): string
+function portal_notice_escape($value): string
 {
-    return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8');
+    return htmlspecialchars(
+        (string)($value ?? ''),
+        ENT_QUOTES | ENT_SUBSTITUTE,
+        'UTF-8'
+    );
 }
 
-/* =====================================================
-   HANDLE NOTIFICATION ACTIONS
-===================================================== */
+/*
+|--------------------------------------------------------------------------
+| HANDLE NOTIFICATION ACTIONS
+|--------------------------------------------------------------------------
+*/
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $submittedToken = $_POST['csrf_token'] ?? '';
     $action = $_POST['action'] ?? '';
 
-    if (!hash_equals($csrfToken, $submittedToken)) {
+    if (
+        !is_string($submittedToken) ||
+        !hash_equals($csrfToken, $submittedToken)
+    ) {
 
         $errorMessage = 'Invalid request. Please refresh the page and try again.';
 
@@ -121,14 +181,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $errorMessage = $e->getMessage();
 
-            error_log('Student Notice Error: ' . $e->getMessage());
+            error_log('Portal Notice Error: ' . $e->getMessage());
         }
     }
 }
 
-/* =====================================================
-   GET PUBLISHED NOTICES
-===================================================== */
+/*
+|--------------------------------------------------------------------------
+| GET ROLE-BASED PUBLISHED NOTICES
+|--------------------------------------------------------------------------
+*/
 
 $notices = [];
 
@@ -137,18 +199,21 @@ $stmt = $conn->prepare(
         id,
         title,
         body,
+        attachment_path,
         audience,
         published_at,
         created_at
      FROM notices
      WHERE is_published = 1
-       AND audience IN ('all', 'student')
+       AND audience IN ('all', ?)
      ORDER BY
         COALESCE(published_at, created_at) DESC,
         id DESC"
 );
 
 if ($stmt) {
+
+    $stmt->bind_param("s", $audience);
 
     if ($stmt->execute()) {
 
@@ -163,12 +228,14 @@ if ($stmt) {
 
 } else {
 
-    error_log('Student Notices Query Error: ' . $conn->error);
+    error_log('Portal Notices Query Error: ' . $conn->error);
 }
 
-/* =====================================================
-   GET STUDENT NOTIFICATIONS
-===================================================== */
+/*
+|--------------------------------------------------------------------------
+| GET PERSONAL NOTIFICATIONS
+|--------------------------------------------------------------------------
+*/
 
 $notifications = [];
 $unreadCount = 0;
@@ -208,7 +275,7 @@ if ($stmt) {
 
 } else {
 
-    error_log('Student Notifications Query Error: ' . $conn->error);
+    error_log('Portal Notifications Query Error: ' . $conn->error);
 }
 
 ?>
@@ -221,7 +288,7 @@ if ($stmt) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title><?= student_notice_escape($pageTitle) ?></title>
+    <title><?= portal_notice_escape($pageTitle) ?></title>
 
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css">
 
@@ -254,6 +321,8 @@ if ($stmt) {
         max-width: 1200px;
         margin: 30px auto;
     }
+
+    /* TOPBAR */
 
     .topbar {
         background: var(--white);
@@ -303,6 +372,8 @@ if ($stmt) {
         color: var(--white);
     }
 
+    /* PAGE BANNER */
+
     .page-banner {
         background: linear-gradient(115deg, var(--navy), var(--navy-light));
         color: var(--white);
@@ -320,7 +391,10 @@ if ($stmt) {
         font-size: 13px;
         color: #e0e8f1;
         margin: 0;
+        line-height: 1.6;
     }
+
+    /* STATISTICS */
 
     .stats-grid {
         display: grid;
@@ -348,6 +422,8 @@ if ($stmt) {
         font-size: 25px;
     }
 
+    /* CONTENT */
+
     .content-card {
         background: var(--white);
         border: 1px solid var(--border);
@@ -369,6 +445,8 @@ if ($stmt) {
         font-size: 17px;
         margin: 0;
     }
+
+    /* BADGES */
 
     .badge {
         display: inline-block;
@@ -393,6 +471,8 @@ if ($stmt) {
         background: #edf1f5;
         color: var(--muted);
     }
+
+    /* NOTICE ITEMS */
 
     .notice-item {
         border: 1px solid var(--border);
@@ -429,6 +509,52 @@ if ($stmt) {
         color: var(--muted);
         font-size: 11px;
     }
+
+    /* PDF ATTACHMENT */
+
+    .notice-attachment {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 15px;
+        padding: 12px;
+        background: #f5f8fc;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+    }
+
+    .attachment-label {
+        color: var(--navy);
+        font-size: 12px;
+        font-weight: 700;
+        margin-right: 5px;
+    }
+
+    .pdf-link {
+        display: inline-block;
+        text-decoration: none;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 700;
+    }
+
+    .view-pdf {
+        background: var(--navy);
+        color: var(--white);
+    }
+
+    .download-pdf {
+        background: #e8f5ed;
+        color: #146c43;
+    }
+
+    .pdf-link:hover {
+        opacity: 0.85;
+    }
+
+    /* NOTIFICATIONS */
 
     .notification-item {
         border: 1px solid var(--border);
@@ -477,6 +603,8 @@ if ($stmt) {
         margin-top: 9px;
     }
 
+    /* BUTTONS */
+
     .mark-read-form {
         margin: 0;
     }
@@ -499,6 +627,8 @@ if ($stmt) {
         background: var(--navy-light);
     }
 
+    /* MESSAGES */
+
     .message {
         padding: 13px 16px;
         border-radius: 8px;
@@ -518,6 +648,8 @@ if ($stmt) {
         color: #842029;
     }
 
+    /* EMPTY STATE */
+
     .empty-state {
         text-align: center;
         background: #f8fafc;
@@ -535,12 +667,17 @@ if ($stmt) {
         font-size: 14px;
     }
 
+    /* FOOTER */
+
     .footer {
         text-align: center;
         padding: 18px 10px;
         color: var(--muted);
         font-size: 12px;
+        line-height: 1.7;
     }
+
+    /* RESPONSIVE */
 
     @media (max-width: 650px) {
 
@@ -597,16 +734,21 @@ if ($stmt) {
 
     <div class="notice-container">
 
+        <!-- TOPBAR -->
+
         <header class="topbar">
 
             <div>
+
                 <h2>DU EMBA MIS Student Portal</h2>
+
                 <p>Notices & Notifications</p>
+
             </div>
 
             <div class="topbar-links">
 
-                <a class="dashboard-link" href="<?= BASE_URL ?>/student/dashboard.php">
+                <a class="dashboard-link" href="<?= portal_notice_escape($dashboardUrl) ?>">
                     Dashboard
                 </a>
 
@@ -618,61 +760,89 @@ if ($stmt) {
 
         </header>
 
+        <!-- PAGE BANNER -->
+
         <section class="page-banner">
 
             <h1>Notices & Notifications</h1>
 
             <p>
-                Stay updated with academic announcements and personal notifications.
+                Welcome, <?= portal_notice_escape($userName) ?>.
+                Stay updated with official announcements and personal notifications.
             </p>
 
         </section>
 
+        <!-- SUCCESS / ERROR MESSAGES -->
+
         <?php if ($successMessage): ?>
+
         <div class="message success">
-            <?= student_notice_escape($successMessage) ?>
+            <?= portal_notice_escape($successMessage) ?>
         </div>
+
         <?php endif; ?>
 
         <?php if ($errorMessage): ?>
+
         <div class="message error">
-            <?= student_notice_escape($errorMessage) ?>
+            <?= portal_notice_escape($errorMessage) ?>
         </div>
+
         <?php endif; ?>
+
+        <!-- STATISTICS -->
 
         <section class="stats-grid">
 
             <div class="stat-card">
+
                 <span>Published Notices</span>
+
                 <strong><?= count($notices) ?></strong>
+
             </div>
 
             <div class="stat-card">
+
                 <span>Total Notifications</span>
+
                 <strong><?= count($notifications) ?></strong>
+
             </div>
 
             <div class="stat-card">
+
                 <span>Unread Notifications</span>
+
                 <strong><?= $unreadCount ?></strong>
+
             </div>
 
         </section>
 
-        <!-- PUBLISHED NOTICES -->
+        <!-- OFFICIAL NOTICES -->
 
         <section class="content-card">
 
             <div class="section-heading">
+
                 <h2>Official Notices</h2>
-                <span class="badge published">Published</span>
+
+                <span class="badge published">
+                    Published
+                </span>
+
             </div>
 
             <?php if (empty($notices)): ?>
 
             <div class="empty-state">
+
                 <strong>No Published Notices</strong>
-                There are currently no notices available for students.
+
+                <?= portal_notice_escape($settings['emptyMessage']) ?>
+
             </div>
 
             <?php else: ?>
@@ -682,22 +852,74 @@ if ($stmt) {
             <article class="notice-item">
 
                 <h3>
-                    <?= student_notice_escape($notice['title']) ?>
+                    <?= portal_notice_escape($notice['title']) ?>
                 </h3>
 
-                <div class="notice-body"><?= student_notice_escape($notice['body']) ?></div>
+                <div class="notice-body"><?= portal_notice_escape($notice['body']) ?></div>
+
+                <!-- PDF ATTACHMENT -->
+
+                <?php if (!empty($notice['attachment_path'])): ?>
+
+                <?php
+
+                            $attachmentPath = (string)$notice['attachment_path'];
+
+                            $validAttachment = preg_match(
+                                '#^uploads/notices/[a-f0-9]{32}\.pdf$#i',
+                                $attachmentPath
+                            );
+
+                            ?>
+
+                <?php if ($validAttachment): ?>
+
+                <div class="notice-attachment">
+
+                    <span class="attachment-label">
+                        📎 PDF Attachment
+                    </span>
+
+                    <a class="pdf-link view-pdf" href="<?= BASE_URL ?>/<?= portal_notice_escape($attachmentPath) ?>"
+                        target="_blank" rel="noopener noreferrer">
+                        View PDF
+                    </a>
+
+                    <a class="pdf-link download-pdf" href="<?= BASE_URL ?>/<?= portal_notice_escape($attachmentPath) ?>"
+                        download>
+                        Download PDF
+                    </a>
+
+                </div>
+
+                <?php endif; ?>
+
+                <?php endif; ?>
+
+                <!-- NOTICE DATE -->
 
                 <div class="notice-meta">
 
-                    <span class="badge published">Official Notice</span>
+                    <span class="badge published">
+                        Official Notice
+                    </span>
 
                     <span>
+
                         Published:
-                        <?= student_notice_escape(
-                                !empty($notice['published_at'])
-                                    ? date('d M Y, h:i A', strtotime($notice['published_at']))
-                                    : date('d M Y, h:i A', strtotime($notice['created_at']))
-                            ) ?>
+
+                        <?= portal_notice_escape(
+                                    !empty($notice['published_at'])
+                                        ? date(
+                                            'd M Y, h:i A',
+                                            strtotime($notice['published_at'])
+                                        )
+                                        : date(
+                                            'd M Y, h:i A',
+                                            strtotime($notice['created_at'])
+                                        )
+                                ) ?>
+
                     </span>
 
                 </div>
@@ -722,7 +944,7 @@ if ($stmt) {
 
                 <form method="POST" style="margin:0;">
 
-                    <input type="hidden" name="csrf_token" value="<?= student_notice_escape($csrfToken) ?>">
+                    <input type="hidden" name="csrf_token" value="<?= portal_notice_escape($csrfToken) ?>">
 
                     <input type="hidden" name="action" value="mark_all_read">
 
@@ -739,32 +961,42 @@ if ($stmt) {
             <?php if (empty($notifications)): ?>
 
             <div class="empty-state">
+
                 <strong>No Notifications Yet</strong>
+
                 Your personal notifications will appear here.
+
             </div>
 
             <?php else: ?>
 
             <?php foreach ($notifications as $notification): ?>
 
-            <?php $isUnread = empty($notification['read_at']); ?>
+            <?php
+                    $isUnread = empty($notification['read_at']);
+                    ?>
 
             <article class="notification-item <?= $isUnread ? 'unread-item' : '' ?>">
 
                 <div class="notification-content">
 
                     <h3>
-                        <?= student_notice_escape($notification['title']) ?>
+                        <?= portal_notice_escape($notification['title']) ?>
                     </h3>
 
-                    <p><?= student_notice_escape($notification['message']) ?></p>
+                    <p><?= portal_notice_escape($notification['message']) ?></p>
 
                     <span class="notification-date">
-                        <?= student_notice_escape(
-                                !empty($notification['created_at'])
-                                    ? date('d M Y, h:i A', strtotime($notification['created_at']))
-                                    : 'Date unavailable'
-                            ) ?>
+
+                        <?= portal_notice_escape(
+                                    !empty($notification['created_at'])
+                                        ? date(
+                                            'd M Y, h:i A',
+                                            strtotime($notification['created_at'])
+                                        )
+                                        : 'Date unavailable'
+                                ) ?>
+
                     </span>
 
                 </div>
@@ -775,7 +1007,7 @@ if ($stmt) {
 
                     <form method="POST" class="mark-read-form">
 
-                        <input type="hidden" name="csrf_token" value="<?= student_notice_escape($csrfToken) ?>">
+                        <input type="hidden" name="csrf_token" value="<?= portal_notice_escape($csrfToken) ?>">
 
                         <input type="hidden" name="action" value="mark_read">
 
@@ -789,7 +1021,9 @@ if ($stmt) {
 
                     <?php else: ?>
 
-                    <span class="badge read">Read</span>
+                    <span class="badge read">
+                        Read
+                    </span>
 
                     <?php endif; ?>
 
@@ -803,10 +1037,17 @@ if ($stmt) {
 
         </section>
 
+        <!-- FOOTER -->
+
         <footer class="footer">
+
             DU EMBA MIS Student Portal
+
             <br>
-            Department of Management Information Systems, University of Dhaka
+
+            Department of Management Information Systems,
+            University of Dhaka
+
         </footer>
 
     </div>

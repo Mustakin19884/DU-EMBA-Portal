@@ -58,7 +58,6 @@ function dashboard_query($sql, $types = '', $params = [])
         }
 
         $stmt->close();
-
         return $rows;
 
     } catch (Throwable $e) {
@@ -85,7 +84,6 @@ function dashboard_date($date)
     }
 
     $timestamp = strtotime($date);
-
     return $timestamp ? date('d M Y', $timestamp) : 'Not available';
 }
 
@@ -96,7 +94,6 @@ function dashboard_datetime($datetime)
     }
 
     $timestamp = strtotime($datetime);
-
     return $timestamp ? date('d M Y, h:i A', $timestamp) : 'Not available';
 }
 
@@ -107,7 +104,6 @@ function dashboard_time($time)
     }
 
     $timestamp = strtotime($time);
-
     return $timestamp ? date('h:i A', $timestamp) : '';
 }
 
@@ -243,10 +239,7 @@ if ($studentId > 0) {
 
 $cgpa = null;
 
-if (
-    $cgpaData &&
-    (float)$cgpaData['total_credits'] > 0
-) {
+if ($cgpaData && (float)$cgpaData['total_credits'] > 0) {
     $cgpa = (float)$cgpaData['total_grade_points']
           / (float)$cgpaData['total_credits'];
 }
@@ -277,10 +270,7 @@ if ($studentId > 0 && $currentSemesterId > 0) {
 
 $sgpa = null;
 
-if (
-    $sgpaData &&
-    (float)$sgpaData['total_credits'] > 0
-) {
+if ($sgpaData && (float)$sgpaData['total_credits'] > 0) {
     $sgpa = (float)$sgpaData['total_grade_points']
           / (float)$sgpaData['total_credits'];
 }
@@ -430,7 +420,13 @@ if ($userId > 0) {
 ========================================================= */
 
 $notices = dashboard_query(
-    "SELECT id, title, body, published_at, created_at
+    "SELECT
+        id,
+        title,
+        body,
+        attachment_path,
+        published_at,
+        created_at
      FROM notices
      WHERE is_published = 1
        AND (audience = 'all' OR audience = 'student')
@@ -847,6 +843,48 @@ if ($invoiceSummary['total_amount'] > 0) {
         margin: 0 0 6px;
     }
 
+    /* CLICKABLE NOTICE LINKS */
+
+    .notice-title-link {
+        color: var(--navy);
+        text-decoration: none;
+        transition: 0.2s;
+    }
+
+    .notice-title-link:hover {
+        color: var(--navy-light);
+        text-decoration: underline;
+    }
+
+    .notice-view-link {
+        display: inline-block;
+        margin-top: 7px;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--navy-light);
+        text-decoration: none;
+    }
+
+    .notice-view-link:hover {
+        text-decoration: underline;
+    }
+
+    .dashboard-notice-pdf {
+        display: inline-block;
+        margin-top: 9px;
+        padding: 7px 11px;
+        border-radius: 6px;
+        background: #edf4fb;
+        color: var(--navy);
+        font-size: 11px;
+        font-weight: 700;
+        text-decoration: none;
+    }
+
+    .dashboard-notice-pdf:hover {
+        background: #dce9f6;
+    }
+
     .notice-item p,
     .notification-item p {
         color: var(--muted);
@@ -972,16 +1010,13 @@ if ($invoiceSummary['total_amount'] > 0) {
 
         </header>
 
-
         <!-- WELCOME PANEL -->
         <section class="welcome-panel">
 
             <div>
                 <h1>Welcome, <?= dashboard_escape($studentName) ?>!</h1>
 
-                <p>
-                    Welcome to your DU EMBA MIS Student Dashboard.
-                </p>
+                <p>Welcome to your DU EMBA MIS Student Dashboard.</p>
 
                 <p>
                     Current Semester:
@@ -996,7 +1031,6 @@ if ($invoiceSummary['total_amount'] > 0) {
 
         </section>
 
-
         <!-- SUMMARY CARDS -->
         <section class="stat-grid">
 
@@ -1008,9 +1042,7 @@ if ($invoiceSummary['total_amount'] > 0) {
 
             <div class="stat-card">
                 <div class="stat-label">Credit Hours</div>
-                <div class="stat-value">
-                    <?= number_format($totalCreditHours, 1) ?>
-                </div>
+                <div class="stat-value"><?= number_format($totalCreditHours, 1) ?></div>
                 <div class="stat-note">Current semester</div>
             </div>
 
@@ -1028,7 +1060,6 @@ if ($invoiceSummary['total_amount'] > 0) {
 
         </section>
 
-
         <!-- MAIN DASHBOARD COLUMNS -->
         <div class="dashboard-columns">
 
@@ -1040,10 +1071,7 @@ if ($invoiceSummary['total_amount'] > 0) {
 
                     <div class="section-heading">
                         <h2>Student Information</h2>
-
-                        <a href="<?= BASE_URL ?>/student/profile.php">
-                            View Profile
-                        </a>
+                        <a href="<?= BASE_URL ?>/student/profile.php">View Profile</a>
                     </div>
 
                     <?php if ($student): ?>
@@ -1104,7 +1132,6 @@ if ($invoiceSummary['total_amount'] > 0) {
 
                 </section>
 
-
                 <!-- REGISTERED COURSES -->
                 <section class="dashboard-section" id="my-courses">
 
@@ -1135,37 +1162,29 @@ if ($invoiceSummary['total_amount'] > 0) {
                                 <?php foreach ($registeredCourses as $course): ?>
 
                                 <?php
-                                $schedule = 'Not scheduled';
+                            $schedule = 'Not scheduled';
 
-                                if (!empty($course['class_day'])) {
-                                    $schedule = $course['class_day'];
+                            if (!empty($course['class_day'])) {
+                                $schedule = $course['class_day'];
 
-                                    $startTime = dashboard_time($course['start_time'] ?? '');
-                                    $endTime = dashboard_time($course['end_time'] ?? '');
+                                $startTime = dashboard_time($course['start_time'] ?? '');
+                                $endTime = dashboard_time($course['end_time'] ?? '');
 
-                                    if ($startTime !== '' && $endTime !== '') {
-                                        $schedule .= ' (' . $startTime . ' - ' . $endTime . ')';
-                                    }
-
-                                    if (!empty($course['room'])) {
-                                        $schedule .= ' | ' . $course['room'];
-                                    }
+                                if ($startTime !== '' && $endTime !== '') {
+                                    $schedule .= ' (' . $startTime . ' - ' . $endTime . ')';
                                 }
-                                ?>
+
+                                if (!empty($course['room'])) {
+                                    $schedule .= ' | ' . $course['room'];
+                                }
+                            }
+                            ?>
 
                                 <tr>
-                                    <td>
-                                        <strong><?= dashboard_escape($course['course_code']) ?></strong>
-                                    </td>
-
+                                    <td><strong><?= dashboard_escape($course['course_code']) ?></strong></td>
                                     <td><?= dashboard_escape($course['course_title']) ?></td>
-
                                     <td><?= number_format((float)$course['credit_hours'], 1) ?></td>
-
-                                    <td>
-                                        <?= dashboard_escape($course['teacher_name'] ?: 'Not assigned') ?>
-                                    </td>
-
+                                    <td><?= dashboard_escape($course['teacher_name'] ?: 'Not assigned') ?></td>
                                     <td><?= dashboard_escape($schedule) ?></td>
                                 </tr>
 
@@ -1186,7 +1205,6 @@ if ($invoiceSummary['total_amount'] > 0) {
                     <?php endif; ?>
 
                 </section>
-
 
                 <!-- ACADEMIC RESULTS -->
                 <section class="dashboard-section" id="academic-results">
@@ -1222,7 +1240,6 @@ if ($invoiceSummary['total_amount'] > 0) {
                                     </td>
 
                                     <td><?= dashboard_escape($result['semester_name'] ?: 'Not available') ?></td>
-
                                     <td><?= number_format((float)$result['total_marks'], 2) ?></td>
 
                                     <td>
@@ -1232,7 +1249,6 @@ if ($invoiceSummary['total_amount'] > 0) {
                                     </td>
 
                                     <td><?= number_format((float)$result['grade_point'], 2) ?></td>
-
                                     <td><?= dashboard_escape(dashboard_date($result['published_at'])) ?></td>
                                 </tr>
 
@@ -1253,7 +1269,6 @@ if ($invoiceSummary['total_amount'] > 0) {
                     <?php endif; ?>
 
                 </section>
-
 
                 <!-- INVOICES -->
                 <section class="dashboard-section" id="payments">
@@ -1282,11 +1297,8 @@ if ($invoiceSummary['total_amount'] > 0) {
 
                                 <tr>
                                     <td><?= dashboard_escape($invoice['invoice_number']) ?></td>
-
                                     <td><?= dashboard_escape($invoice['semester_name'] ?: 'Not available') ?></td>
-
                                     <td><?= dashboard_money($invoice['total_amount']) ?></td>
-
                                     <td><?= dashboard_escape(dashboard_date($invoice['due_date'])) ?></td>
 
                                     <td>
@@ -1313,7 +1325,6 @@ if ($invoiceSummary['total_amount'] > 0) {
                     <?php endif; ?>
 
                 </section>
-
 
                 <!-- PAYMENT HISTORY -->
                 <section class="dashboard-section">
@@ -1343,14 +1354,10 @@ if ($invoiceSummary['total_amount'] > 0) {
 
                                 <tr>
                                     <td><?= dashboard_escape($payment['invoice_number']) ?></td>
-
                                     <td><?= dashboard_money($payment['amount']) ?></td>
-
                                     <td><?= dashboard_escape($payment['payment_method'] ?: 'Not available') ?></td>
-
                                     <td><?= dashboard_escape($payment['transaction_reference'] ?: 'Not available') ?>
                                     </td>
-
                                     <td><?= dashboard_escape(dashboard_date($payment['paid_at'])) ?></td>
 
                                     <td>
@@ -1380,7 +1387,6 @@ if ($invoiceSummary['total_amount'] > 0) {
                 </section>
 
             </div>
-
 
             <!-- RIGHT COLUMN -->
             <div>
@@ -1422,7 +1428,6 @@ if ($invoiceSummary['total_amount'] > 0) {
                     </div>
 
                 </section>
-
 
                 <!-- PAYMENT SUMMARY -->
                 <section class="dashboard-section">
@@ -1468,7 +1473,6 @@ if ($invoiceSummary['total_amount'] > 0) {
 
                 </section>
 
-
                 <!-- QUICK LINKS -->
                 <section class="dashboard-section">
 
@@ -1478,34 +1482,36 @@ if ($invoiceSummary['total_amount'] > 0) {
 
                     <div class="quick-links">
 
-                        <a class="quick-link" href="<?= BASE_URL ?>/student/profile.php">
-                            My Profile
-                        </a>
+                        <a class="quick-link" href="<?= BASE_URL ?>/student/profile.php">My Profile</a>
 
                         <a class="quick-link" href="<?= BASE_URL ?>/student/course-registration.php">
                             Course Registration
                         </a>
+
                         <a class="quick-link" href="<?= BASE_URL ?>/student/registered-courses.php">
                             My Registered Courses
                         </a>
-                        <a class="quick-link" href="#my-courses">
-                            My Courses
-                        </a>
+
+                        <a class="quick-link" href="#my-courses">My Courses</a>
+
                         <a class="quick-link" href="<?= BASE_URL ?>/student/attendance.php">
                             My Attendance
                         </a>
-                        <a class="quick-link" href="#academic-results">
-                            Academic Results
-                        </a>
+
+                        <a class="quick-link" href="#academic-results">Academic Results</a>
+
                         <a class="quick-link" href="<?= BASE_URL ?>/student/results.php">
                             My Results & Transcript
                         </a>
-                        <a class="quick-link" href="#payments">
-                            Payment History
-                        </a>
+
+                        <a class="quick-link" href="#payments">Payment History</a>
 
                         <a class="quick-link" href="<?= BASE_URL ?>/student/payments.php">
                             My Payments & Invoices
+                        </a>
+
+                        <a class="quick-link" href="<?= BASE_URL ?>/student/notices.php">
+                            Notices
                         </a>
 
                         <a class="quick-link" href="<?= BASE_URL ?>/auth/logout.php">
@@ -1515,7 +1521,6 @@ if ($invoiceSummary['total_amount'] > 0) {
                     </div>
 
                 </section>
-
 
                 <!-- NOTIFICATIONS -->
                 <section class="dashboard-section">
@@ -1557,12 +1562,15 @@ if ($invoiceSummary['total_amount'] > 0) {
 
                 </section>
 
-
-                <!-- NOTICES -->
-                <section class="dashboard-section">
+                <!-- LATEST NOTICES -->
+                <section class="dashboard-section" id="latest-notices">
 
                     <div class="section-heading">
                         <h2>Latest Notices</h2>
+
+                        <a href="<?= BASE_URL ?>/student/notices.php">
+                            View All Notices →
+                        </a>
                     </div>
 
                     <?php if (!empty($notices)): ?>
@@ -1571,10 +1579,32 @@ if ($invoiceSummary['total_amount'] > 0) {
 
                     <div class="notice-item">
 
-                        <h3><?= dashboard_escape($notice['title']) ?></h3>
+                        <h3>
+                            <a class="notice-title-link" href="<?= BASE_URL ?>/student/notices.php">
+                                <?= dashboard_escape($notice['title']) ?>
+                            </a>
+                        </h3>
 
                         <p>
-                            <?= nl2br(dashboard_escape($notice['body'])) ?>
+                            <?php
+                                $noticeBody = (string)($notice['body'] ?? '');
+                                $previewLength = 180;
+
+                                if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+                                    if (mb_strlen($noticeBody, 'UTF-8') > $previewLength) {
+                                        $noticeBody = mb_substr(
+                                            $noticeBody,
+                                            0,
+                                            $previewLength,
+                                            'UTF-8'
+                                        ) . '...';
+                                    }
+                                } elseif (strlen($noticeBody) > $previewLength) {
+                                    $noticeBody = substr($noticeBody, 0, $previewLength) . '...';
+                                }
+
+                                echo nl2br(dashboard_escape($noticeBody));
+                                ?>
                         </p>
 
                         <small>
@@ -1584,6 +1614,33 @@ if ($invoiceSummary['total_amount'] > 0) {
                                     )
                                 ) ?>
                         </small>
+
+                        <br>
+
+                        <a class="notice-view-link" href="<?= BASE_URL ?>/student/notices.php">
+                            View Full Notice →
+                        </a>
+
+                        <?php
+                            $noticeAttachment = (string)($notice['attachment_path'] ?? '');
+
+                            $validNoticePdf = preg_match(
+                                '#^uploads/notices/[a-f0-9]{32}\.pdf$#i',
+                                $noticeAttachment
+                            );
+                            ?>
+
+                        <?php if ($validNoticePdf): ?>
+
+                        <br>
+
+                        <a class="dashboard-notice-pdf"
+                            href="<?= BASE_URL ?>/<?= dashboard_escape($noticeAttachment) ?>" target="_blank"
+                            rel="noopener noreferrer">
+                            📎 View Attached PDF
+                        </a>
+
+                        <?php endif; ?>
 
                     </div>
 
@@ -1603,7 +1660,6 @@ if ($invoiceSummary['total_amount'] > 0) {
             </div>
 
         </div>
-
 
         <!-- FOOTER -->
         <footer class="footer">
